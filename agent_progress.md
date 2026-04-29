@@ -123,3 +123,15 @@
 
 ### Risks
 - 板块概览接口耗时约12秒（需全量腾讯API补充52周数据），可考虑异步或缓存
+- `--reload` 不刷新 `__pycache__`，需手动清理后重启
+
+## Session 8 — 2026-04-29
+
+### Done
+- 自选股功能：新增"自选股"tab
+  - 后端：watchlist SQLite表 + 增删查接口（`/trade/watchlist`, `/trade/watchlist/add`, `/trade/watchlist/remove`）
+  - 查询接口自动补充实时价格、涨跌幅、涨跌额
+  - 前端 WatchlistTab：显示自选股行情，可删除、可交易、可点击跳详情
+  - 行情列表每行加"自选"按钮
+  - 详情页头部加"加自选"按钮
+- Tab 顺序：行情筛选 → 自选股 → 行业板块 → 我的持仓 → 交易记录

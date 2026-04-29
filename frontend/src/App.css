@@ -552,6 +552,40 @@ body {
   color: var(--text-h);
 }
 
+.watch-btn {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.watch-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.remove-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  opacity: 0.6;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.remove-btn:hover {
+  opacity: 1;
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
 @media (max-width: 768px) {
   .app { padding: 8px; }
   .account-bar { gap: 12px; }

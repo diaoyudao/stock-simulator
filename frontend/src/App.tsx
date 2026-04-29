@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem } from "./api";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import "./App.css";
 
-type Tab = "market" | "positions" | "transactions" | "sectors";
+type Tab = "market" | "watchlist" | "sectors" | "positions" | "transactions";
 
 function useTradingTime() {
   const [info, setInfo] = useState(() => checkTradingTime());
@@ -73,15 +73,16 @@ export default function App() {
         {account && <AccountBar account={account} />}
       </header>
       <nav className="tabs">
-        {(["market", "sectors", "positions", "transactions"] as Tab[]).map((t) => (
+        {(["market", "watchlist", "sectors", "positions", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-            {t === "market" ? "行情筛选" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : "交易记录"}
+            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : "交易记录"}
           </button>
         ))}
         <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置账户</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} />}
+        {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "transactions" && <TransactionsTab transactions={transactions} onFilter={handleTxFilter} />}
@@ -235,7 +236,10 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
                 <td className={s["涨跌幅"] >= 0 ? "profit" : "loss"}>{s["涨跌幅"].toFixed(2)}%</td>
                 <td>{s["换手率"]?.toFixed(2)}%</td>
                 <td>{(s["成交量"] / 10000).toFixed(0)}万</td>
-                <td><TradeButton code={s["代码"]} name={s["名称"]} price={s["最新价"]} onDone={onTrade} /></td>
+                <td>
+                  <button className="watch-btn" onClick={() => api.addWatchlist(s["代码"], s["名称"])}>自选</button>
+                  <TradeButton code={s["代码"]} name={s["名称"]} price={s["最新价"]} onDone={onTrade} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -314,7 +318,48 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
   );
 }
 
-function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string) => void; onTrade: () => void }) {
+  const { isTradingTime } = useTradingTime();
+  const [items, setItems] = useState<WatchlistItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchList = useCallback(() => {
+    setLoading(true);
+    api.getWatchlist().then(setItems).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchList(); }, [fetchList]);
+
+  const handleRemove = async (code: string) => {
+    await api.removeWatchlist(code);
+    fetchList();
+  };
+
+  if (loading) return <div className="loading">加载中...</div>;
+  if (items.length === 0) return <div className="empty">暂无自选股，在行情页点击"自选"添加</div>;
+  return (
+    <table className="stock-table">
+      <thead>
+        <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        {items.map((s) => (
+          <tr key={s.code}>
+            <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.code}</button></td>
+            <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.name}</button></td>
+            <td className="price">{s.price.toFixed(2)}</td>
+            <td className={s.change_pct >= 0 ? "profit" : "loss"}>{s.change_pct >= 0 ? "+" : ""}{s.change_pct.toFixed(2)}%</td>
+            <td className={s.change_amt >= 0 ? "profit" : "loss"}>{s.change_amt >= 0 ? "+" : ""}{s.change_amt.toFixed(2)}</td>
+            <td>
+              <TradeButton code={s.code} name={s.name} price={s.price} onDone={onTrade} />
+              <button className="remove-btn" onClick={() => handleRemove(s.code)}>删除</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}({ onSelectStock }: { onSelectStock: (code: string) => void }) {
   const [sectors, setSectors] = useState<SectorOverviewItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -544,6 +589,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
       {/* Header */}
       <div className="detail-header">
         <button className="back-btn" onClick={onBack}>← 返回</button>
+        <button className="watch-btn" onClick={() => api.addWatchlist(code, detail ? detail["名称"] : "")}>加自选</button>
         <div className="detail-title">
           <span className="detail-name">{detail["名称"]}</span>
           <span className="detail-code">{detail["代码"]}</span>

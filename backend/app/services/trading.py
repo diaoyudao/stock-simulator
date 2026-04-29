@@ -38,6 +38,11 @@ async def _ensure_tables(db: aiosqlite.Connection):
             created_at REAL NOT NULL
         );
         INSERT OR IGNORE INTO account (id, cash) VALUES (1, 100000.0);
+        CREATE TABLE IF NOT EXISTS watchlist (
+            code TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            added_at REAL NOT NULL
+        );
     """)
 
 
@@ -179,5 +184,37 @@ async def reset_account() -> dict:
         await db.execute("DELETE FROM transactions")
         await db.commit()
         return {"success": True, "message": "账户已重置"}
+    finally:
+        await db.close()
+
+
+async def add_watchlist(code: str, name: str) -> dict:
+    db = await _get_db()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO watchlist (code, name, added_at) VALUES (?, ?, ?)",
+            (code, name, time.time()),
+        )
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def remove_watchlist(code: str) -> dict:
+    db = await _get_db()
+    try:
+        await db.execute("DELETE FROM watchlist WHERE code = ?", (code,))
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def get_watchlist() -> list[dict]:
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT code, name FROM watchlist ORDER BY added_at")
+        return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()

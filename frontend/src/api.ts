@@ -100,6 +100,14 @@ export interface Transaction {
   created_at: number;
 }
 
+export interface WatchlistItem {
+  code: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  change_amt: number;
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -134,4 +142,17 @@ export const api = {
       body: JSON.stringify({ code, quantity }),
     }),
   reset: () => request("/trade/reset", { method: "POST" }),
+  getWatchlist: () => request<WatchlistItem[]>("/trade/watchlist"),
+  addWatchlist: (code: string, name: string) =>
+    request("/trade/watchlist/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name }),
+    }),
+  removeWatchlist: (code: string) =>
+    request("/trade/watchlist/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
 };

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.services.market_data import get_spot_data
 from app.services.trading import (
     buy_stock, sell_stock, get_account, get_positions, get_transactions, reset_account,
+    add_watchlist, remove_watchlist, get_watchlist,
 )
 
 router = APIRouter()
@@ -135,3 +136,34 @@ async def transactions(
 @router.post("/reset")
 async def reset():
     return await reset_account()
+
+
+class WatchRequest(BaseModel):
+    code: str
+    name: str = ""
+
+
+@router.get("/watchlist")
+async def watchlist():
+    items = await get_watchlist()
+    if not items:
+        return []
+    price_map = {s["代码"]: s for s in get_spot_data()}
+    result = []
+    for item in items:
+        stock = price_map.get(item["code"])
+        if stock:
+            result.append({**item, "price": stock["最新价"], "change_pct": stock["涨跌幅"], "change_amt": stock["涨跌额"]})
+        else:
+            result.append({**item, "price": 0, "change_pct": 0, "change_amt": 0})
+    return result
+
+
+@router.post("/watchlist/add")
+async def watchlist_add(req: WatchRequest):
+    return await add_watchlist(req.code, req.name)
+
+
+@router.post("/watchlist/remove")
+async def watchlist_remove(req: WatchRequest):
+    return await remove_watchlist(req.code)

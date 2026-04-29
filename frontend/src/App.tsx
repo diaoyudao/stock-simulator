@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction } from "./api";
-import { createChart, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import "./App.css";
 
 type Tab = "market" | "positions" | "transactions";
@@ -415,7 +415,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
     });
     chartApiRef.current = chart;
 
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#f85149",
       downColor: "#3fb950",
       borderUpColor: "#f85149",
@@ -424,7 +424,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
       wickDownColor: "#3fb950",
     });
 
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       color: "#58a6ff",
       priceFormat: { type: "volume" },
       priceScaleId: "volume",

@@ -105,3 +105,6 @@
 ### Decisions
 - **ThreadPoolExecutor max_workers=8**：新浪API并发8线程稳定，更高可能触发限制
 - **行业映射扩展到48个**：并发后速度快，不再限制为30个
+
+### Discovered
+- lightweight-charts v5 移除了 `addCandlestickSeries()` / `addHistogramSeries()`，需改用 `addSeries(CandlestickSeries, opts)` / `addSeries(HistogramSeries, opts)`

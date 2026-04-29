@@ -5,6 +5,27 @@ import "./App.css";
 
 type Tab = "market" | "positions" | "transactions";
 
+function useTradingTime() {
+  const [info, setInfo] = useState(() => checkTradingTime());
+  useEffect(() => {
+    const id = setInterval(() => setInfo(checkTradingTime()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  return info;
+}
+
+function checkTradingTime() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  const h = now.getHours(), m = now.getMinutes(), t = h * 60 + m;
+  if (day === 0 || day === 6) return { isTradingTime: false, tradingStatus: "休市（周末）" };
+  if (t < 9 * 60 + 30) return { isTradingTime: false, tradingStatus: "尚未开盘" };
+  if (t <= 11 * 60 + 30) return { isTradingTime: true, tradingStatus: "交易中" };
+  if (t < 13 * 60) return { isTradingTime: false, tradingStatus: "午间休市" };
+  if (t <= 15 * 60) return { isTradingTime: true, tradingStatus: "交易中" };
+  return { isTradingTime: false, tradingStatus: "已收盘" };
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("market");
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -229,6 +250,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
 }
 
 function TradeButton({ code, name, price, onDone }: { code: string; name: string; price: number; onDone: () => void }) {
+  const { isTradingTime, tradingStatus } = useTradingTime();
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState(100);
   const [action, setAction] = useState<"buy" | "sell">("buy");
@@ -242,7 +264,7 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
   };
 
   if (!open) {
-    return <button className="trade-btn" onClick={() => setOpen(true)}>交易</button>;
+    return <button className="trade-btn" disabled={!isTradingTime} onClick={() => setOpen(true)} title={!isTradingTime ? tradingStatus : undefined}>交易</button>;
   }
   return (
     <div className="trade-panel">
@@ -357,6 +379,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   onBack: () => void;
   onTrade: () => void;
 }) {
+  const { isTradingTime, tradingStatus } = useTradingTime();
   const [detail, setDetail] = useState<StockDetail | null>(null);
   const [klinePeriod, setKlinePeriod] = useState<"daily" | "weekly" | "monthly">("daily");
   const chartRef = useRef<HTMLDivElement>(null);
@@ -523,16 +546,17 @@ function StockDetail({ code, positions, onBack, onTrade }: {
 
       {/* Trade panel */}
       <div className="detail-trade">
+        {!isTradingTime && <div className="trading-status">{tradingStatus}，无法交易</div>}
         <div className="detail-trade-row">
-          <button className={tradeAction === "buy" ? "detail-buy active" : "detail-buy"} onClick={() => setTradeAction("buy")}>买入</button>
-          <button className={tradeAction === "sell" ? "detail-sell active" : "detail-sell"} onClick={() => setTradeAction("sell")}>卖出</button>
+          <button className={tradeAction === "buy" ? "detail-buy active" : "detail-buy"} onClick={() => setTradeAction("buy")} disabled={!isTradingTime}>买入</button>
+          <button className={tradeAction === "sell" ? "detail-sell active" : "detail-sell"} onClick={() => setTradeAction("sell")} disabled={!isTradingTime}>卖出</button>
         </div>
         <div className="detail-trade-row">
           <span>当前价: ¥{fmt(price)}</span>
           <label>数量(股)<input type="number" value={tradeQty} step={100} min={100} onChange={(e) => setTradeQty(Math.max(100, Math.round(Number(e.target.value) / 100) * 100))} /></label>
           <span>金额: ¥{(tradeQty * price).toFixed(2)}</span>
         </div>
-        <button className="detail-confirm" onClick={executeTrade}>确认{tradeAction === "buy" ? "买入" : "卖出"}</button>
+        <button className="detail-confirm" onClick={executeTrade} disabled={!isTradingTime}>确认{tradeAction === "buy" ? "买入" : "卖出"}</button>
       </div>
     </div>
   );

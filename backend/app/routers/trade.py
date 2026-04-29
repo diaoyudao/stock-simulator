@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -7,6 +8,22 @@ from app.services.trading import (
 )
 
 router = APIRouter()
+
+
+def _check_trading_time():
+    now = datetime.now()
+    if now.weekday() >= 5:
+        return False, "休市（周末）"
+    t = now.hour * 60 + now.minute
+    if t < 9 * 60 + 30:
+        return False, "尚未开盘"
+    if t <= 11 * 60 + 30:
+        return True, "交易中"
+    if t < 13 * 60:
+        return False, "午间休市"
+    if t <= 15 * 60:
+        return True, "交易中"
+    return False, "已收盘"
 
 
 class BuyRequest(BaseModel):
@@ -81,6 +98,9 @@ async def positions():
 
 @router.post("/buy")
 async def buy(req: BuyRequest):
+    ok, msg = _check_trading_time()
+    if not ok:
+        return {"error": f"非交易时间（{msg}）"}
     price = req.price
     if price is None:
         price = _get_price(req.code)
@@ -91,6 +111,9 @@ async def buy(req: BuyRequest):
 
 @router.post("/sell")
 async def sell(req: SellRequest):
+    ok, msg = _check_trading_time()
+    if not ok:
+        return {"error": f"非交易时间（{msg}）"}
     price = req.price
     if price is None:
         price = _get_price(req.code)

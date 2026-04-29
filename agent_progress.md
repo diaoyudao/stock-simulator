@@ -92,3 +92,16 @@
 
 ### Risks
 - 未处理法定节假日，节假日仍允许交易（可后续接入节假日API）
+
+## Session 6 — 2026-04-29
+
+### Done
+- 接口速度优化：ThreadPoolExecutor 并发请求
+  - `_fetch_all_stocks()`：80页串行→8线程并发，60秒→8.5秒
+  - `_fetch_sector_mapping()`：30行业串行→48行业并发，10秒→2秒
+  - `_fetch_tencent_batch()`：分片并发请求腾讯API
+- 移除所有 `time.sleep(0.3)` 间隔（并发模式下无需节流）
+
+### Decisions
+- **ThreadPoolExecutor max_workers=8**：新浪API并发8线程稳定，更高可能触发限制
+- **行业映射扩展到48个**：并发后速度快，不再限制为30个

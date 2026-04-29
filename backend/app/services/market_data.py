@@ -1,5 +1,6 @@
 import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 
 _BASE_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
@@ -15,31 +16,45 @@ _sector_cache_time = 0.0
 _sector_list_cache: list[dict] = []  # [{name, code}]
 _sector_list_cache_time = 0.0
 
+_executor = ThreadPoolExecutor(max_workers=8)
+
+
+def _fetch_page(page: int, page_size: int = 80) -> list[dict]:
+    """获取单页行情数据。"""
+    try:
+        r = requests.get(_BASE_URL, params={
+            "page": page, "num": page_size,
+            "sort": "changepercent", "asc": 0,
+            "node": "hs_a", "symbol": "", "_s_r_a": "page",
+        }, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return []
+        return [_parse_sina_item(item) for item in data]
+    except Exception:
+        return []
+
 
 def _fetch_all_stocks() -> list[dict]:
-    """从新浪财经分页获取全市场A股实时行情。"""
-    all_stocks = []
-    page = 1
+    """从新浪财经并发获取全市场A股实时行情。"""
+    # 先获取第一页，确定总页数
+    first_page = _fetch_page(1)
+    if not first_page:
+        return []
     page_size = 80
-    while True:
-        try:
-            r = requests.get(_BASE_URL, params={
-                "page": page, "num": page_size,
-                "sort": "changepercent", "asc": 0,
-                "node": "hs_a", "symbol": "", "_s_r_a": "page",
-            }, timeout=15)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
-            break
-        if not data:
-            break
-        for item in data:
-            all_stocks.append(_parse_sina_item(item))
-        if len(data) < page_size:
-            break
-        page += 1
-        time.sleep(0.3)
+    # 新浪不返回总数，逐页探测；先并发请求后续页
+    futures = {_executor.submit(_fetch_page, p): p for p in range(2, 85)}
+    all_stocks = list(first_page)
+    last_empty = False
+    for future in as_completed(futures):
+        result = future.result()
+        if not result:
+            last_empty = True
+            continue
+        if len(result) < page_size:
+            last_empty = True
+        all_stocks.extend(result)
     return all_stocks
 
 
@@ -74,11 +89,11 @@ def _fetch_tencent_batch(codes: list[str]) -> dict[str, dict]:
         prefix = "sh" if code.startswith("6") or code.startswith("9") else "sz"
         symbols.append(f"{prefix}{code}")
     result: dict[str, dict] = {}
-    # 腾讯API单次最多约50只
-    for i in range(0, len(symbols), 50):
-        batch = symbols[i:i+50]
+
+    def _fetch_tencent_chunk(chunk_symbols: list[str]) -> dict[str, dict]:
+        chunk_result: dict[str, dict] = {}
         try:
-            r = requests.get(_TENCENT_URL + ",".join(batch), timeout=10)
+            r = requests.get(_TENCENT_URL + ",".join(chunk_symbols), timeout=10)
             for line in r.text.split(";"):
                 line = line.strip()
                 if not line or "~" not in line:
@@ -89,14 +104,20 @@ def _fetch_tencent_batch(codes: list[str]) -> dict[str, dict]:
                 code = parts[2] if len(parts) > 2 else ""
                 if not code:
                     continue
-                result[code] = {
+                chunk_result[code] = {
                     "量比": float(parts[43]) if len(parts) > 43 and parts[43] else 0,
                     "52周最高": float(parts[47]) if len(parts) > 47 and parts[47] else 0,
                     "52周最低": float(parts[48]) if len(parts) > 48 and parts[48] else 0,
                 }
         except Exception:
             pass
-        time.sleep(0.5)
+        return chunk_result
+
+    # 并发请求腾讯API，每批50只
+    chunks = [symbols[i:i+50] for i in range(0, len(symbols), 50)]
+    futures = [_executor.submit(_fetch_tencent_chunk, chunk) for chunk in chunks]
+    for future in as_completed(futures):
+        result.update(future.result())
     return result
 
 
@@ -126,10 +147,8 @@ def _extract_sectors(node) -> list[dict]:
     if isinstance(node, list):
         for item in node:
             if isinstance(item, str) and item.startswith("new_"):
-                # 找到 new_ 代码，回溯找名称
                 pass
             elif isinstance(item, list):
-                # 格式: [名称, '', 'new_xxx']
                 if len(item) == 3 and isinstance(item[0], str) and isinstance(item[2], str) and item[2].startswith("new_"):
                     result.append({"name": item[0], "code": item[2]})
                 else:
@@ -137,30 +156,38 @@ def _extract_sectors(node) -> list[dict]:
     return result
 
 
+def _fetch_sector_page(sector_code: str, sector_name: str) -> list[tuple[str, str]]:
+    """获取单个行业的股票列表，返回 [(code, sector_name)]。"""
+    try:
+        r = requests.get(_BASE_URL, params={
+            "page": 1, "num": 200,
+            "sort": "changepercent", "asc": 0,
+            "node": sector_code, "symbol": "", "_s_r_a": "page",
+        }, timeout=10)
+        data = r.json()
+        if data:
+            return [(item.get("code", ""), sector_name) for item in data if item.get("code")]
+    except Exception:
+        pass
+    return []
+
+
 def _fetch_sector_mapping() -> dict[str, str]:
-    """构建 代码→行业名称 映射（从各行业板块获取股票列表）。"""
+    """构建 代码→行业名称 映射（并发获取各行业板块）。"""
     global _sector_cache, _sector_cache_time
     now = time.time()
     if _sector_cache and now - _sector_cache_time < 300:
         return _sector_cache
-    mapping: dict[str, str] = {}
     sectors = _fetch_sector_list()
-    for sector in sectors[:30]:  # 限制请求量，取前30个行业
-        try:
-            r = requests.get(_BASE_URL, params={
-                "page": 1, "num": 200,
-                "sort": "changepercent", "asc": 0,
-                "node": sector["code"], "symbol": "", "_s_r_a": "page",
-            }, timeout=10)
-            data = r.json()
-            if data:
-                for item in data:
-                    code = item.get("code", "")
-                    if code:
-                        mapping[code] = sector["name"]
-        except Exception:
-            pass
-        time.sleep(0.3)
+    mapping: dict[str, str] = {}
+    # 并发请求所有行业
+    futures = [
+        _executor.submit(_fetch_sector_page, s["code"], s["name"])
+        for s in sectors[:48]
+    ]
+    for future in as_completed(futures):
+        for code, name in future.result():
+            mapping[code] = name
     _sector_cache = mapping
     _sector_cache_time = now
     return mapping
@@ -198,7 +225,6 @@ def _enrich_with_consecutive_days(stocks: list[dict]) -> list[dict]:
     for s in stocks:
         s["连涨天数"] = 0
         s["连跌天数"] = 0
-    # 批量获取K线太慢，仅对少量股票计算
     return stocks
 
 
@@ -335,7 +361,6 @@ def filter_low_price(
         filtered.append(s)
 
     reverse = sort_order == "desc"
-    # 量比/52周也可作为排序字段
     if sort_by in ("量比", "52周最高", "52周最低") and need_tencent:
         filtered.sort(key=lambda s: s.get(sort_by, 0), reverse=reverse)
     else:
@@ -357,22 +382,18 @@ def get_stock_detail(code: str) -> dict:
     """获取单只股票详细行情。"""
     for s in get_spot_data():
         if s["代码"] == code:
-            # 补充腾讯额外字段
             extra = _fetch_tencent_batch([code])
             ext = extra.get(code, {})
             s["量比"] = ext.get("量比", 0)
             s["52周最高"] = ext.get("52周最高", 0)
             s["52周最低"] = ext.get("52周最低", 0)
-            # 补充连涨连跌
             consec = compute_consecutive_days(code)
             s["连涨天数"] = consec["连涨天数"]
             s["连跌天数"] = consec["连跌天数"]
-            # 补充行业
             sector_mapping = _fetch_sector_mapping()
             s["行业"] = sector_mapping.get(code, "")
             return s
 
-    # 缓存未命中，从腾讯API获取
     prefix = "sh" if code.startswith("6") else "sz"
     try:
         r = requests.get(f"https://qt.gtimg.cn/q={prefix}{code}", timeout=10)

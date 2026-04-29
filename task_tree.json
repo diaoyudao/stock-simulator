@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "project": "StockSimulator - A股低价股模拟炒股",
+  "goals": [
+    {
+      "id": "g1",
+      "title": "数据层 — A股实时行情接入",
+      "state": "expanded",
+      "priority": 1,
+      "tasks": [
+        {
+          "id": "t1",
+          "title": "FastAPI 后端骨架 + 健康检查接口",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "FastAPI 启动无报错", "passes": true },
+            { "step": "GET /health 返回 200", "passes": true },
+            { "step": "CORS 配置正确", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t2",
+          "title": "新浪财经行情接口封装（原 AKShare 不可用，发现替代方案）",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "获取全市场实时行情并返回 JSON", "passes": true },
+            { "step": "请求频率控制（0.3秒间隔）", "passes": true },
+            { "step": "数据缓存（60秒TTL）", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t3",
+          "title": "单只股票历史K线接口",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "输入股票代码返回K线数据", "passes": true },
+            { "step": "支持通过新浪API获取", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "title": "筛选系统 — 5元以下低价股过滤",
+      "state": "expanded",
+      "priority": 2,
+      "tasks": [
+        {
+          "id": "t4",
+          "title": "低价股筛选接口",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "价格区间筛选（1-5元）", "passes": true },
+            { "step": "按涨跌幅/换手率/成交量排序", "passes": true },
+            { "step": "响应时间 < 3秒", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t5",
+          "title": "多维度筛选条件组合",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "支持价格范围+涨跌幅+换手率组合筛选", "passes": true },
+            { "step": "筛选结果分页返回", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        }
+      ]
+    },
+    {
+      "id": "g3",
+      "title": "模拟交易 — 买入/卖出/持仓管理",
+      "state": "expanded",
+      "priority": 3,
+      "tasks": [
+        {
+          "id": "t6",
+          "title": "模拟账户与资金管理",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "初始资金10万，余额正确计算", "passes": true },
+            { "step": "SQLite 持久化账户状态", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t7",
+          "title": "买入交易接口",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "按当前价买入指定数量", "passes": true },
+            { "step": "余额不足时拒绝", "passes": true },
+            { "step": "记录交易时间与价格", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t8",
+          "title": "卖出交易接口",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "按当前价卖出指定数量", "passes": true },
+            { "step": "持仓不足时拒绝", "passes": true },
+            { "step": "计算盈亏金额与比例", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        },
+        {
+          "id": "t9",
+          "title": "持仓与交易记录查询",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "查看当前持仓列表及盈亏", "passes": true },
+            { "step": "查看历史交易记录", "passes": true },
+            { "step": "计算总资产（现金+持仓市值）", "passes": true }
+          ],
+          "discovered_in": "init",
+          "completed_in": "session-1"
+        }
+      ]
+    },
+    {
+      "id": "g4",
+      "title": "前端界面 — 交互与展示",
+      "state": "expanded",
+      "priority": 4,
+      "tasks": [
+        {
+          "id": "t10",
+          "title": "React 前端 — 行情筛选+交易+持仓+记录",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "低价股筛选与分页", "passes": true },
+            { "step": "买入/卖出交易面板", "passes": true },
+            { "step": "持仓盈亏展示", "passes": true },
+            { "step": "交易记录列表", "passes": true },
+            { "step": "账户总览（总资产/现金/盈亏）", "passes": true }
+          ],
+          "discovered_in": "session-1",
+          "completed_in": "session-1"
+        }
+      ]
+    },
+    {
+      "id": "g5",
+      "title": "收尾 — 端到端验证与优化",
+      "state": "expanded",
+      "priority": 5,
+      "tasks": [
+        {
+          "id": "t11",
+          "title": "端到端验证通过",
+          "kanban": "done",
+          "acceptance": [
+            { "step": "行情接口返回518只5元以下股票", "passes": true },
+            { "step": "买入/卖出/持仓/记录全流程正确", "passes": true },
+            { "step": "前端代理到后端通信正常", "passes": true }
+          ],
+          "discovered_in": "session-1",
+          "completed_in": "session-1"
+        }
+      ]
+    }
+  ],
+  "discovered_tasks": [
+    {
+      "id": "dt1",
+      "title": "AKShare/东方财富API不可用",
+      "parent_goal": "g1",
+      "kanban": "done",
+      "acceptance": [],
+      "discovered_in": "session-1",
+      "reason": "AKShare和东方财富API连接被拒，切换为新浪财经API作为数据源"
+    }
+  ]
+}

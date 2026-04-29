@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query
 
 from app.services.market_data import (
     filter_low_price, get_stock_detail, get_stock_history,
-    get_sector_list, compute_consecutive_days,
+    get_sector_list, get_sector_overview, compute_consecutive_days,
 )
 
 router = APIRouter()
@@ -63,6 +63,11 @@ def spot(
 @router.get("/sectors")
 def sectors():
     return get_sector_list()
+
+
+@router.get("/sector-overview")
+def sector_overview():
+    return get_sector_overview()
 
 
 @router.get("/consecutive/{code}")

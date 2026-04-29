@@ -108,3 +108,18 @@
 
 ### Discovered
 - lightweight-charts v5 移除了 `addCandlestickSeries()` / `addHistogramSeries()`，需改用 `addSeries(CandlestickSeries, opts)` / `addSeries(HistogramSeries, opts)`
+
+## Session 7 — 2026-04-29
+
+### Done
+- 行业板块面板：新增第4个tab"行业板块"
+  - 后端 `get_sector_overview()`：按行业聚合全市场行情，计算均涨幅、涨跌家数、成交额、52周新高新低数、领涨股top3
+  - 后端 `GET /market/sector-overview` 端点
+  - 前端 `SectorsTab` 组件：表格展示48个板块概览
+  - 领涨股名称可点击跳转详情页
+- K线图首次加载修复：`requestAnimationFrame` 等容器布局完成
+- 涨跌幅颜色修正：红涨绿跌（A股惯例），修正 CSS 变量 `--profit`/`--loss`
+- 权限配置精简：55条冗余规则→20条通配符
+
+### Risks
+- 板块概览接口耗时约12秒（需全量腾讯API补充52周数据），可考虑异步或缓存

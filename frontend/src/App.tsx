@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction } from "./api";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import "./App.css";
 
-type Tab = "market" | "positions" | "transactions";
+type Tab = "market" | "positions" | "transactions" | "sectors";
 
 function useTradingTime() {
   const [info, setInfo] = useState(() => checkTradingTime());
@@ -73,15 +73,16 @@ export default function App() {
         {account && <AccountBar account={account} />}
       </header>
       <nav className="tabs">
-        {(["market", "positions", "transactions"] as Tab[]).map((t) => (
+        {(["market", "sectors", "positions", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-            {t === "market" ? "行情筛选" : t === "positions" ? "我的持仓" : "交易记录"}
+            {t === "market" ? "行情筛选" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : "交易记录"}
           </button>
         ))}
         <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置账户</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} />}
+        {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "transactions" && <TransactionsTab transactions={transactions} onFilter={handleTxFilter} />}
       </main>
@@ -306,6 +307,46 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
             <td className={p.profit >= 0 ? "profit" : "loss"}>{p.profit >= 0 ? "+" : ""}{p.profit.toFixed(2)}</td>
             <td className={p.profit_pct >= 0 ? "profit" : "loss"}>{p.profit_pct.toFixed(2)}%</td>
             <td><TradeButton code={p.code} name={p.name} price={p.current_price} onDone={onTrade} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+  const [sectors, setSectors] = useState<SectorOverviewItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getSectorOverview().then(setSectors).finally(() => setLoading(false));
+  }, []);
+
+  const fmtAmt = (v: number) => {
+    if (v >= 1e8) return (v / 1e8).toFixed(1) + "亿";
+    if (v >= 1e4) return (v / 1e4).toFixed(0) + "万";
+    return v.toFixed(0);
+  };
+
+  if (loading) return <div className="loading">加载中...</div>;
+  return (
+    <table className="stock-table">
+      <thead>
+        <tr><th>板块</th><th>均涨幅</th><th>涨/跌</th><th>成交额</th><th>新高</th><th>新低</th><th>领涨股</th></tr>
+      </thead>
+      <tbody>
+        {sectors.map((s) => (
+          <tr key={s.name}>
+            <td className="sector-name">{s.name}</td>
+            <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
+            <td><span className="profit">{s.up_count}</span>/<span className="loss">{s.down_count}</span></td>
+            <td>{fmtAmt(s.amount)}</td>
+            <td className={s.new_high_count > 0 ? "profit" : ""}>{s.new_high_count || "-"}</td>
+            <td className={s.new_low_count > 0 ? "loss" : ""}>{s.new_low_count || "-"}</td>
+            <td>{s.top_stocks.map((t, i) => (
+              <span key={t.代码}>{i > 0 && "、"}<button className="stock-link" onClick={() => onSelectStock(t.代码)}>{t.名称}</button><span className={t.涨跌幅 >= 0 ? "profit" : "loss"}>{t.涨跌幅 >= 0 ? "+" : ""}{t.涨跌幅}%</span></span>
+            ))}</td>
           </tr>
         ))}
       </tbody>

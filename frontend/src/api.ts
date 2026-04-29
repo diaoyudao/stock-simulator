@@ -50,6 +50,17 @@ export interface SectorItem {
   code: string;
 }
 
+export interface SectorOverviewItem {
+  name: string;
+  avg_change_pct: number;
+  up_count: number;
+  down_count: number;
+  amount: number;
+  new_high_count: number;
+  new_low_count: number;
+  top_stocks: { 代码: string; 名称: string; 涨跌幅: number }[];
+}
+
 export interface KLineItem {
   day: string;
   open: string;
@@ -98,6 +109,7 @@ export const api = {
   },
   getDetail: (code: string) => request<StockDetail>(`/market/detail/${code}`),
   getSectors: () => request<SectorItem[]>("/market/sectors"),
+  getSectorOverview: () => request<SectorOverviewItem[]>("/market/sector-overview"),
   getConsecutive: (code: string) => request<{连涨天数: number; 连跌天数: number}>(`/market/consecutive/${code}`),
   getHistory: (code: string, period: string = "daily") =>
     request<KLineItem[]>(`/market/history/${code}?period=${period}`),

@@ -547,6 +547,11 @@ body {
   margin-bottom: 4px;
 }
 
+.sector-name {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
 @media (max-width: 768px) {
   .app { padding: 8px; }
   .account-bar { gap: 12px; }

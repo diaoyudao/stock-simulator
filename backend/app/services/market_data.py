@@ -198,6 +198,56 @@ def get_sector_list() -> list[dict]:
     return _fetch_sector_list()
 
 
+def get_sector_overview() -> list[dict]:
+    """返回各行业板块概览：平均涨跌幅、涨跌家数、成交额、新高新低、领涨股。"""
+    stocks = get_spot_data()
+    mapping = _fetch_sector_mapping()
+
+    # 按行业分组
+    groups: dict[str, list[dict]] = {}
+    for s in stocks:
+        sector_name = mapping.get(s["代码"])
+        if not sector_name:
+            continue
+        groups.setdefault(sector_name, []).append(s)
+
+    # 补充52周数据（全量，因为需要统计新高新低）
+    all_codes = [s["代码"] for sector_stocks in groups.values() for s in sector_stocks]
+    extra = _fetch_tencent_batch(all_codes) if all_codes else {}
+    for s in stocks:
+        ext = extra.get(s["代码"], {})
+        s["52周最高"] = ext.get("52周最高", 0)
+        s["52周最低"] = ext.get("52周最低", 0)
+
+    # 聚合计算
+    result = []
+    for sector_name, sector_stocks in groups.items():
+        up = sum(1 for s in sector_stocks if s["涨跌幅"] > 0)
+        down = sum(1 for s in sector_stocks if s["涨跌幅"] < 0)
+        avg_change = sum(s["涨跌幅"] for s in sector_stocks) / len(sector_stocks) if sector_stocks else 0
+        total_amount = sum(s["成交额"] for s in sector_stocks)
+        new_high = sum(1 for s in sector_stocks if s.get("52周最高") and s["最新价"] >= s["52周最高"] * 0.95)
+        new_low = sum(1 for s in sector_stocks if s.get("52周最低") and s["最新价"] <= s["52周最低"] * 1.05)
+
+        top3 = sorted(sector_stocks, key=lambda s: s["涨跌幅"], reverse=True)[:3]
+        result.append({
+            "name": sector_name,
+            "avg_change_pct": round(avg_change, 2),
+            "up_count": up,
+            "down_count": down,
+            "amount": round(total_amount),
+            "new_high_count": new_high,
+            "new_low_count": new_low,
+            "top_stocks": [
+                {"代码": s["代码"], "名称": s["名称"], "涨跌幅": round(s["涨跌幅"], 2)}
+                for s in top3
+            ],
+        })
+
+    result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+    return result
+
+
 def get_spot_data() -> list[dict]:
     """获取全市场A股实时行情，带60秒缓存。"""
     global _cached_stocks, _last_fetch_time

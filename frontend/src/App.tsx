@@ -359,7 +359,9 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
       </tbody>
     </table>
   );
-}({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+}
+
+function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
   const [sectors, setSectors] = useState<SectorOverviewItem[]>([]);
   const [loading, setLoading] = useState(false);
 

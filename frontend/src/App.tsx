@@ -394,74 +394,82 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   }, [code]);
 
   useEffect(() => {
-    if (!chartRef.current) return;
+    const container = chartRef.current;
+    if (!container) return;
     if (chartApiRef.current) {
       chartApiRef.current.remove();
       chartApiRef.current = null;
     }
 
-    const chart = createChart(chartRef.current, {
-      width: chartRef.current.clientWidth,
-      height: 320,
-      layout: {
-        background: { type: ColorType.Solid, color: "#161b22" },
-        textColor: "#c9d1d9",
-      },
-      grid: {
-        vertLines: { color: "#21262d" },
-        horzLines: { color: "#21262d" },
-      },
-      timeScale: { borderColor: "#30363d" },
-    });
-    chartApiRef.current = chart;
+    // 等容器布局完成后再创建图表
+    const raf = requestAnimationFrame(() => {
+      if (!container) return;
+      const chart = createChart(container, {
+        width: container.clientWidth || 800,
+        height: 320,
+        layout: {
+          background: { type: ColorType.Solid, color: "#161b22" },
+          textColor: "#c9d1d9",
+        },
+        grid: {
+          vertLines: { color: "#21262d" },
+          horzLines: { color: "#21262d" },
+        },
+        timeScale: { borderColor: "#30363d" },
+      });
+      chartApiRef.current = chart;
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#f85149",
-      downColor: "#3fb950",
-      borderUpColor: "#f85149",
-      borderDownColor: "#3fb950",
-      wickUpColor: "#f85149",
-      wickDownColor: "#3fb950",
-    });
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#f85149",
+        downColor: "#3fb950",
+        borderUpColor: "#f85149",
+        borderDownColor: "#3fb950",
+        wickUpColor: "#f85149",
+        wickDownColor: "#3fb950",
+      });
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: "#58a6ff",
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-    });
-    chart.priceScale("volume").applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        color: "#58a6ff",
+        priceFormat: { type: "volume" },
+        priceScaleId: "volume",
+      });
+      chart.priceScale("volume").applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
 
-    api.getHistory(code, klinePeriod).then((data) => {
-      if (!data.length) return;
-      const candleData: CandlestickData[] = data.map((d) => ({
-        time: d.day,
-        open: parseFloat(d.open),
-        high: parseFloat(d.high),
-        low: parseFloat(d.low),
-        close: parseFloat(d.close),
-      }));
-      const volumeData: HistogramData[] = data.map((d) => ({
-        time: d.day,
-        value: parseFloat(d.volume),
-        color: parseFloat(d.close) >= parseFloat(d.open) ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
-      }));
-      candleSeries.setData(candleData);
-      volumeSeries.setData(volumeData);
-      chart.timeScale().fitContent();
+      api.getHistory(code, klinePeriod).then((data) => {
+        if (!data.length) return;
+        const candleData: CandlestickData[] = data.map((d) => ({
+          time: d.day,
+          open: parseFloat(d.open),
+          high: parseFloat(d.high),
+          low: parseFloat(d.low),
+          close: parseFloat(d.close),
+        }));
+        const volumeData: HistogramData[] = data.map((d) => ({
+          time: d.day,
+          value: parseFloat(d.volume),
+          color: parseFloat(d.close) >= parseFloat(d.open) ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
+        }));
+        candleSeries.setData(candleData);
+        volumeSeries.setData(volumeData);
+        chart.timeScale().fitContent();
+      });
     });
 
     const handleResize = () => {
-      if (chartRef.current) {
-        chart.applyOptions({ width: chartRef.current.clientWidth });
+      if (chartRef.current && chartApiRef.current) {
+        chartApiRef.current.applyOptions({ width: chartRef.current.clientWidth });
       }
     };
     window.addEventListener("resize", handleResize);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("resize", handleResize);
-      chart.remove();
-      chartApiRef.current = null;
+      if (chartApiRef.current) {
+        chartApiRef.current.remove();
+        chartApiRef.current = null;
+      }
     };
   }, [code, klinePeriod]);
 

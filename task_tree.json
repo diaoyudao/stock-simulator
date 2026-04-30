@@ -13,9 +13,18 @@
           "title": "FastAPI 后端骨架 + 健康检查接口",
           "kanban": "done",
           "acceptance": [
-            { "step": "FastAPI 启动无报错", "passes": true },
-            { "step": "GET /health 返回 200", "passes": true },
-            { "step": "CORS 配置正确", "passes": true }
+            {
+              "step": "FastAPI 启动无报错",
+              "passes": true
+            },
+            {
+              "step": "GET /health 返回 200",
+              "passes": true
+            },
+            {
+              "step": "CORS 配置正确",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -25,9 +34,18 @@
           "title": "新浪财经行情接口封装",
           "kanban": "done",
           "acceptance": [
-            { "step": "获取全市场实时行情并返回 JSON", "passes": true },
-            { "step": "请求频率控制", "passes": true },
-            { "step": "数据缓存（60秒TTL）", "passes": true }
+            {
+              "step": "获取全市场实时行情并返回 JSON",
+              "passes": true
+            },
+            {
+              "step": "请求频率控制",
+              "passes": true
+            },
+            {
+              "step": "数据缓存（60秒TTL）",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -37,8 +55,14 @@
           "title": "单只股票历史K线接口",
           "kanban": "done",
           "acceptance": [
-            { "step": "输入股票代码返回K线数据", "passes": true },
-            { "step": "支持日K/周K/月K", "passes": true }
+            {
+              "step": "输入股票代码返回K线数据",
+              "passes": true
+            },
+            {
+              "step": "支持日K/周K/月K",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -56,9 +80,18 @@
           "title": "低价股筛选接口",
           "kanban": "done",
           "acceptance": [
-            { "step": "价格区间筛选（1-5元）", "passes": true },
-            { "step": "按涨跌幅/换手率/成交量排序", "passes": true },
-            { "step": "响应时间 < 3秒", "passes": true }
+            {
+              "step": "价格区间筛选（1-5元）",
+              "passes": true
+            },
+            {
+              "step": "按涨跌幅/换手率/成交量排序",
+              "passes": true
+            },
+            {
+              "step": "响应时间 < 3秒",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -68,8 +101,14 @@
           "title": "多维度筛选条件组合",
           "kanban": "done",
           "acceptance": [
-            { "step": "支持价格范围+涨跌幅+换手率组合筛选", "passes": true },
-            { "step": "筛选结果分页返回", "passes": true }
+            {
+              "step": "支持价格范围+涨跌幅+换手率组合筛选",
+              "passes": true
+            },
+            {
+              "step": "筛选结果分页返回",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -87,8 +126,14 @@
           "title": "模拟账户与资金管理",
           "kanban": "done",
           "acceptance": [
-            { "step": "初始资金10万，余额正确计算", "passes": true },
-            { "step": "SQLite 持久化账户状态", "passes": true }
+            {
+              "step": "初始资金10万，余额正确计算",
+              "passes": true
+            },
+            {
+              "step": "SQLite 持久化账户状态",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -98,9 +143,18 @@
           "title": "买入交易接口",
           "kanban": "done",
           "acceptance": [
-            { "step": "按当前价买入指定数量", "passes": true },
-            { "step": "余额不足时拒绝", "passes": true },
-            { "step": "记录交易时间与价格", "passes": true }
+            {
+              "step": "按当前价买入指定数量",
+              "passes": true
+            },
+            {
+              "step": "余额不足时拒绝",
+              "passes": true
+            },
+            {
+              "step": "记录交易时间与价格",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -110,9 +164,18 @@
           "title": "卖出交易接口",
           "kanban": "done",
           "acceptance": [
-            { "step": "按当前价卖出指定数量", "passes": true },
-            { "step": "持仓不足时拒绝", "passes": true },
-            { "step": "计算盈亏金额与比例", "passes": true }
+            {
+              "step": "按当前价卖出指定数量",
+              "passes": true
+            },
+            {
+              "step": "持仓不足时拒绝",
+              "passes": true
+            },
+            {
+              "step": "计算盈亏金额与比例",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -122,9 +185,18 @@
           "title": "持仓与交易记录查询",
           "kanban": "done",
           "acceptance": [
-            { "step": "查看当前持仓列表及盈亏", "passes": true },
-            { "step": "查看历史交易记录", "passes": true },
-            { "step": "计算总资产（现金+持仓市值）", "passes": true }
+            {
+              "step": "查看当前持仓列表及盈亏",
+              "passes": true
+            },
+            {
+              "step": "查看历史交易记录",
+              "passes": true
+            },
+            {
+              "step": "计算总资产（现金+持仓市值）",
+              "passes": true
+            }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -142,11 +214,26 @@
           "title": "React 前端 — 行情筛选+交易+持仓+记录",
           "kanban": "done",
           "acceptance": [
-            { "step": "低价股筛选与分页", "passes": true },
-            { "step": "买入/卖出交易面板", "passes": true },
-            { "step": "持仓盈亏展示", "passes": true },
-            { "step": "交易记录列表", "passes": true },
-            { "step": "账户总览（总资产/现金/盈亏）", "passes": true }
+            {
+              "step": "低价股筛选与分页",
+              "passes": true
+            },
+            {
+              "step": "买入/卖出交易面板",
+              "passes": true
+            },
+            {
+              "step": "持仓盈亏展示",
+              "passes": true
+            },
+            {
+              "step": "交易记录列表",
+              "passes": true
+            },
+            {
+              "step": "账户总览（总资产/现金/盈亏）",
+              "passes": true
+            }
           ],
           "discovered_in": "session-1",
           "completed_in": "session-1"
@@ -164,9 +251,18 @@
           "title": "端到端验证通过",
           "kanban": "done",
           "acceptance": [
-            { "step": "行情接口返回518只5元以下股票", "passes": true },
-            { "step": "买入/卖出/持仓/记录全流程正确", "passes": true },
-            { "step": "前端代理到后端通信正常", "passes": true }
+            {
+              "step": "行情接口返回518只5元以下股票",
+              "passes": true
+            },
+            {
+              "step": "买入/卖出/持仓/记录全流程正确",
+              "passes": true
+            },
+            {
+              "step": "前端代理到后端通信正常",
+              "passes": true
+            }
           ],
           "discovered_in": "session-1",
           "completed_in": "session-1"
@@ -182,36 +278,78 @@
         {
           "id": "t12",
           "title": "技术指标计算模块 — 前端 utils/indicators.ts",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "MA(n) 计算函数，支持任意周期", "passes": false },
-            { "step": "MACD(12,26,9) 返回 DIF/DEA/MACD柱", "passes": false },
-            { "step": "KDJ(9,3,3) 返回 K/D/J 值", "passes": false },
-            { "step": "RSI(6,12,24) 返回三周期值", "passes": false },
-            { "step": "BOLL(20,2) 返回上/中/下轨", "passes": false }
-          ]
+            {
+              "step": "MA(n) 计算函数，支持任意周期",
+              "passes": true
+            },
+            {
+              "step": "MACD(12,26,9) 返回 DIF/DEA/MACD柱",
+              "passes": true
+            },
+            {
+              "step": "KDJ(9,3,3) 返回 K/D/J 值",
+              "passes": true
+            },
+            {
+              "step": "RSI(6,12,24) 返回三周期值",
+              "passes": true
+            },
+            {
+              "step": "BOLL(20,2) 返回上/中/下轨",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t13",
           "title": "主图叠加指标 — MA均线 + BOLL布林带",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "MA 5/10/20/60日均线叠加到K线主图", "passes": false },
-            { "step": "BOLL 上/中/下轨叠加到K线主图", "passes": false },
-            { "step": "指标可切换显隐", "passes": false },
-            { "step": "切换日K/周K/月K时指标重新计算", "passes": false }
-          ]
+            {
+              "step": "MA 5/10/20/60日均线叠加到K线主图",
+              "passes": true
+            },
+            {
+              "step": "BOLL 上/中/下轨叠加到K线主图",
+              "passes": true
+            },
+            {
+              "step": "指标可切换显隐",
+              "passes": true
+            },
+            {
+              "step": "切换日K/周K/月K时指标重新计算",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t14",
           "title": "副图指标 — MACD/KDJ/RSI",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "MACD副图：DIF/DEA线 + 红绿MACD柱", "passes": false },
-            { "step": "KDJ副图：K/D/J三线 + 超买超卖区域", "passes": false },
-            { "step": "RSI副图：6/12/24日三条线 + 30/70参考线", "passes": false },
-            { "step": "副图切换面板，同一时间显示一个副图", "passes": false }
-          ]
+            {
+              "step": "MACD副图：DIF/DEA线 + 红绿MACD柱",
+              "passes": true
+            },
+            {
+              "step": "KDJ副图：K/D/J三线 + 超买超卖区域",
+              "passes": true
+            },
+            {
+              "step": "RSI副图：6/12/24日三条线 + 30/70参考线",
+              "passes": true
+            },
+            {
+              "step": "副图切换面板，同一时间显示一个副图",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     },
@@ -224,34 +362,70 @@
         {
           "id": "t15",
           "title": "委托单数据模型 + 后端API",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "pending_orders表（id/code/name/action/quantity/price/status/created_at）", "passes": false },
-            { "step": "POST /trade/order 创建限价委托", "passes": false },
-            { "step": "GET /trade/orders 查询委托列表", "passes": false },
-            { "step": "DELETE /trade/order/:id 撤单", "passes": false }
-          ]
+            {
+              "step": "pending_orders表（id/code/name/action/quantity/price/status/created_at）",
+              "passes": true
+            },
+            {
+              "step": "POST /trade/order 创建限价委托",
+              "passes": true
+            },
+            {
+              "step": "GET /trade/orders 查询委托列表",
+              "passes": true
+            },
+            {
+              "step": "DELETE /trade/order/:id 撤单",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t16",
           "title": "委托单触发引擎 — 行情更新时自动成交",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "行情刷新时扫描 pending_orders", "passes": false },
-            { "step": "买入委托：当前价 ≤ 委托价时自动成交", "passes": false },
-            { "step": "卖出委托：当前价 ≥ 委托价时自动成交", "passes": false },
-            { "step": "成交后更新持仓/资金/委托状态", "passes": false }
-          ]
+            {
+              "step": "行情刷新时扫描 pending_orders",
+              "passes": true
+            },
+            {
+              "step": "买入委托：当前价 ≤ 委托价时自动成交",
+              "passes": true
+            },
+            {
+              "step": "卖出委托：当前价 ≥ 委托价时自动成交",
+              "passes": true
+            },
+            {
+              "step": "成交后更新持仓/资金/委托状态",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t17",
           "title": "委托单前端UI — 限价交易 + 委托列表",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "详情页限价买入/卖出面板（输入目标价）", "passes": false },
-            { "step": "委托单列表页（状态/价格/时间/撤单）", "passes": false },
-            { "step": "委托成交时前端提示通知", "passes": false }
-          ]
+            {
+              "step": "详情页限价买入/卖出面板（输入目标价）",
+              "passes": true
+            },
+            {
+              "step": "委托单列表页（状态/价格/时间/撤单）",
+              "passes": true
+            },
+            {
+              "step": "委托成交时前端提示通知",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     },
@@ -264,34 +438,70 @@
         {
           "id": "t18",
           "title": "每日资产快照 — 后端",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "daily_snapshots表（date/cash/positions_value/total）", "passes": false },
-            { "step": "交易时自动记录当日快照", "passes": false },
-            { "step": "GET /trade/daily-snapshots 查询历史快照", "passes": false },
-            { "step": "回填历史快照（从transactions推算）", "passes": false }
-          ]
+            {
+              "step": "daily_snapshots表（date/cash/positions_value/total）",
+              "passes": true
+            },
+            {
+              "step": "交易时自动记录当日快照",
+              "passes": true
+            },
+            {
+              "step": "GET /trade/daily-snapshots 查询历史快照",
+              "passes": true
+            },
+            {
+              "step": "回填历史快照（从transactions推算）",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t19",
           "title": "资金曲线图 — 前端",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "折线图展示总资产变化趋势", "passes": false },
-            { "step": "支持时间范围筛选（1周/1月/3月/全部）", "passes": false },
-            { "step": "显示基准线（初始资金10万）", "passes": false }
-          ]
+            {
+              "step": "折线图展示总资产变化趋势",
+              "passes": true
+            },
+            {
+              "step": "支持时间范围筛选（1周/1月/3月/全部）",
+              "passes": true
+            },
+            {
+              "step": "显示基准线（初始资金10万）",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t20",
           "title": "收益统计面板 — 前端",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "总收益率/年化收益率", "passes": false },
-            { "step": "最大回撤及回撤区间", "passes": false },
-            { "step": "交易胜率/盈亏比", "passes": false },
-            { "step": "平均持仓周期", "passes": false }
-          ]
+            {
+              "step": "总收益率/年化收益率",
+              "passes": true
+            },
+            {
+              "step": "最大回撤及回撤区间",
+              "passes": true
+            },
+            {
+              "step": "交易胜率/盈亏比",
+              "passes": true
+            },
+            {
+              "step": "平均持仓周期",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     },
@@ -304,24 +514,50 @@
         {
           "id": "t21",
           "title": "分组数据模型 + 后端API",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "watchlist_groups表（id/name/sort_order）", "passes": false },
-            { "step": "watchlist表加 group_id 字段", "passes": false },
-            { "step": "CRUD接口：创建/重命名/删除分组", "passes": false },
-            { "step": "GET /trade/watchlist 支持 group_id 筛选", "passes": false }
-          ]
+            {
+              "step": "watchlist_groups表（id/name/sort_order）",
+              "passes": true
+            },
+            {
+              "step": "watchlist表加 group_id 字段",
+              "passes": true
+            },
+            {
+              "step": "CRUD接口：创建/重命名/删除分组",
+              "passes": true
+            },
+            {
+              "step": "GET /trade/watchlist 支持 group_id 筛选",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t22",
           "title": "分组前端UI",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "分组侧边栏（创建/重命名/删除）", "passes": false },
-            { "step": "按分组查看自选股列表", "passes": false },
-            { "step": "加自选时选择分组", "passes": false },
-            { "step": "默认分组'我的自选'", "passes": false }
-          ]
+            {
+              "step": "分组侧边栏（创建/重命名/删除）",
+              "passes": true
+            },
+            {
+              "step": "按分组查看自选股列表",
+              "passes": true
+            },
+            {
+              "step": "加自选时选择分组",
+              "passes": true
+            },
+            {
+              "step": "默认分组'我的自选'",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     },
@@ -334,22 +570,42 @@
         {
           "id": "t23",
           "title": "大盘指数对比 — 我的收益 vs 大盘",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "获取上证/深证/创业板指数行情数据", "passes": false },
-            { "step": "收益对比折线图（我的收益 vs 指数涨跌幅）", "passes": false },
-            { "step": "显示跑赢/跑输大盘百分比", "passes": false }
-          ]
+            {
+              "step": "获取上证/深证/创业板指数行情数据",
+              "passes": true
+            },
+            {
+              "step": "收益对比折线图（我的收益 vs 指数涨跌幅）",
+              "passes": true
+            },
+            {
+              "step": "显示跑赢/跑输大盘百分比",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t24",
           "title": "排行榜系统 — 多账户 + 收益率排行",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "accounts表支持多账户（name字段）", "passes": false },
-            { "step": "按周期排行（周/月/总收益率）", "passes": false },
-            { "step": "排行榜前端页面", "passes": false }
-          ]
+            {
+              "step": "accounts表支持多账户（name字段）",
+              "passes": true
+            },
+            {
+              "step": "按周期排行（周/月/总收益率）",
+              "passes": true
+            },
+            {
+              "step": "排行榜前端页面",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     },
@@ -362,22 +618,42 @@
         {
           "id": "t25",
           "title": "涨跌提醒规则 — 后端",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "price_alerts表（id/code/name/condition/value/status）", "passes": false },
-            { "step": "CRUD接口：创建/查询/删除提醒", "passes": false },
-            { "step": "行情更新时扫描规则，触发时记录通知", "passes": false }
-          ]
+            {
+              "step": "price_alerts表（id/code/name/condition/value/status）",
+              "passes": true
+            },
+            {
+              "step": "CRUD接口：创建/查询/删除提醒",
+              "passes": true
+            },
+            {
+              "step": "行情更新时扫描规则，触发时记录通知",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         },
         {
           "id": "t26",
           "title": "通知中心 — 前端",
-          "kanban": "todo",
+          "kanban": "done",
           "acceptance": [
-            { "step": "提醒设置面板（目标价/涨跌幅阈值）", "passes": false },
-            { "step": "浏览器 Notification 推送", "passes": false },
-            { "step": "应用内通知中心（历史提醒列表）", "passes": false }
-          ]
+            {
+              "step": "提醒设置面板（目标价/涨跌幅阈值）",
+              "passes": true
+            },
+            {
+              "step": "浏览器 Notification 推送",
+              "passes": true
+            },
+            {
+              "step": "应用内通知中心（历史提醒列表）",
+              "passes": true
+            }
+          ],
+          "completed_in": "session-10"
         }
       ]
     }

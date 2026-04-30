@@ -170,3 +170,30 @@
 
 ### Current State
 - 新功能开发启动，从 g6 技术指标开始
+
+### Done (本轮新增)
+- t12: 技术指标计算模块 — utils/indicators.ts → 编译通过 + 计算验证
+- t13: 主图叠加指标 — MA5/10/20/60 + BOLL布林带 → 指标切换UI
+- t14: 副图指标 — MACD/KDJ/RSI → lightweight-charts v5 paneIndex 副图
+- t15: 委托单数据模型+API — pending_orders表 + CRUD → 4个端点
+- t16: 委托单触发引擎 — 行情刷新时自动成交 → check_and_fill_orders()
+- t17: 委托单前端UI — 限价交易面板 + 委托单Tab + 撤单
+- t18: 每日资产快照 — daily_snapshots表 + 自动/手动记录
+- t19: 资金曲线图 — lightweight-charts 折线图 + 时间范围筛选
+- t20: 收益统计面板 — 总收益率/年化/最大回撤/胜率/盈亏比
+- t21: 分组数据模型+API — watchlist_groups表 + CRUD + 移动
+- t22: 分组前端UI — 分组栏 + 新建/删除/移动
+- t23: 大盘指数对比 — 上证/深证/创业板行情 + 跑赢/跑输百分比
+- t24: 排行榜系统 — 跳过（单用户应用不适用多账户排行）
+- t25: 涨跌提醒规则 — price_alerts表 + 创建/查询/取消 + 行情触发
+- t26: 通知中心 — 头部铃铛 + 触发提醒面板 + 详情页提醒设置
+
+### Decisions
+- **技术指标前端计算**: K线数据已在前端，纯函数计算无需额外API调用
+- **lightweight-charts paneIndex=1**: v5支持多pane，副图指标直接叠加
+- **委托单冻结资金**: 买入委托创建时冻结资金，成交时退还差额
+- **通知轮询**: 前端60秒轮询/api/trade/orders/check，同时触发委托成交+提醒检查
+
+### Risks
+- 收益统计中盈亏比/胜率计算较简化（基于卖出记录）
+- 浏览器Notification需用户授权，当前仅用应用内通知

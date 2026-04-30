@@ -9,6 +9,7 @@ from app.services.trading import (
     create_order, get_orders, cancel_order, check_and_fill_orders,
     record_daily_snapshot, get_daily_snapshots, get_performance_stats,
     get_groups, create_group, rename_group, delete_group, move_to_group,
+    create_alert, get_alerts, cancel_alert, check_alerts,
 )
 
 router = APIRouter()
@@ -324,6 +325,30 @@ async def watchlist_move(req: MoveRequest):
     return await move_to_group(req.code, req.group_id)
 
 
+# ─── 涨跌提醒 ───
+
+class AlertRequest(BaseModel):
+    code: str
+    name: str = ""
+    condition: str  # "above" / "below"
+    value: float
+
+
+@router.post("/alert")
+async def alert_create(req: AlertRequest):
+    return await create_alert(req.code, req.name, req.condition, req.value)
+
+
+@router.get("/alerts")
+async def alert_list(status: str | None = Query(None)):
+    return await get_alerts(status)
+
+
+@router.post("/alert/{alert_id}/cancel")
+async def alert_cancel(alert_id: int):
+    return await cancel_alert(alert_id)
+
+
 @router.post("/order")
 async def create_limit_order(req: OrderRequest):
     ok, msg = _check_trading_time()
@@ -344,12 +369,12 @@ async def cancel_limit_order(order_id: int):
 
 @router.post("/orders/check")
 async def check_orders():
-    """手动触发委托单检查（前端轮询调用）。"""
+    """手动触发委托单检查 + 提醒检查（前端轮询调用）。"""
     price_map = _build_price_map()
     filled = await check_and_fill_orders(price_map)
-    # 同时记录当日快照
+    triggered_alerts = await check_alerts(price_map)
     await record_daily_snapshot(price_map)
-    return {"filled_count": len(filled), "filled_orders": filled}
+    return {"filled_count": len(filled), "filled_orders": filled, "triggered_alerts": triggered_alerts}
 
 
 @router.get("/daily-snapshots")

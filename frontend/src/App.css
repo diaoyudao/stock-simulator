@@ -712,6 +712,80 @@ body {
   margin-top: 4px;
 }
 
+.notification-bell {
+  position: relative;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 18px;
+}
+
+.bell-badge {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  background: var(--loss);
+  color: #fff;
+  font-size: 10px;
+  border-radius: 8px;
+  padding: 1px 5px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.notification-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 300px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 12px;
+}
+
+.notification-panel h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.notification-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.notification-panel li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.alert-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.alert-panel select,
+.alert-panel input {
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.alert-panel input {
+  width: 80px;
+}
+
 .trading-status {
   font-size: 13px;
   color: var(--loss);

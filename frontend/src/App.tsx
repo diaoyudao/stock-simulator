@@ -108,6 +108,7 @@ function AppInner() {
           )}
         </div>
         {account && <AccountBar account={account} />}
+        <NotificationBell />
       </header>
       <nav className="tabs">
         {(["market", "watchlist", "sectors", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
@@ -138,6 +139,47 @@ function AccountBar({ account }: { account: AccountInfo }) {
       <div><span className="label">现金</span><span className="value">¥{account.cash.toLocaleString()}</span></div>
       <div><span className="label">持仓市值</span><span className="value">¥{account.market_value.toLocaleString()}</span></div>
       <div><span className="label">盈亏</span><span className={`value ${profitClass}`}>{account.total_profit >= 0 ? "+" : ""}¥{account.total_profit.toLocaleString()} ({account.profit_pct.toFixed(2)}%)</span></div>
+    </div>
+  );
+}
+
+function NotificationBell() {
+  const [triggeredAlerts, setTriggeredAlerts] = useState<{ id: number; code: string; name: string; message: string }[]>([]);
+  const [showPanel, setShowPanel] = useState(false);
+
+  const load = useCallback(async () => {
+    const alerts = await api.getAlerts("triggered");
+    setTriggeredAlerts(alerts.map((a: any) => ({ id: a.id, code: a.code, name: a.name, message: a.message || "" })));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Poll every 60s
+  useEffect(() => {
+    const timer = setInterval(load, 60000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const hasNew = triggeredAlerts.length > 0;
+
+  return (
+    <div className="notification-bell" onClick={() => setShowPanel(!showPanel)}>
+      <span className="bell-icon">🔔</span>
+      {hasNew && <span className="bell-badge">{triggeredAlerts.length}</span>}
+      {showPanel && (
+        <div className="notification-panel">
+          <h4>提醒通知</h4>
+          {triggeredAlerts.length === 0 ? (
+            <div className="empty">暂无触发提醒</div>
+          ) : (
+            <ul>
+              {triggeredAlerts.map((a) => (
+                <li key={a.id}><strong>{a.name}</strong> {a.message}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -785,6 +827,9 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   const [tradeQty, setTradeQty] = useState(100);
   const [tradeMode, setTradeMode] = useState<"market" | "limit">("market");
   const [limitPrice, setLimitPrice] = useState(0);
+  const [showAlert, setShowAlert] = useState(false);
+  const [alertCondition, setAlertCondition] = useState<"above" | "below">("above");
+  const [alertValue, setAlertValue] = useState(0);
 
   const pos = positions.find((p) => p.code === code);
 
@@ -1037,11 +1082,27 @@ function StockDetail({ code, positions, onBack, onTrade }: {
       <div className="detail-header">
         <button className="back-btn" onClick={onBack}>← 返回</button>
         <button className="watch-btn" onClick={() => api.addWatchlist(code, detail ? detail["名称"] : "")}>加自选</button>
+        <button className="watch-btn" onClick={() => { setAlertValue(price); setShowAlert(!showAlert); }}>提醒</button>
         <div className="detail-title">
           <span className="detail-name">{detail["名称"]}</span>
           <span className="detail-code">{detail["代码"]}</span>
         </div>
       </div>
+      {showAlert && (
+        <div className="alert-panel">
+          <select value={alertCondition} onChange={(e) => setAlertCondition(e.target.value as "above" | "below")}>
+            <option value="above">涨到</option>
+            <option value="below">跌到</option>
+          </select>
+          <input type="number" value={alertValue} step={0.01} onChange={(e) => setAlertValue(Number(e.target.value))} />
+          <button onClick={async () => {
+            const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue);
+            if (res.success) { setShowAlert(false); alert("提醒已设置"); }
+            else alert(res.error);
+          }}>确认</button>
+          <button onClick={() => setShowAlert(false)}>取消</button>
+        </div>
+      )}
       <div className="detail-price-row">
         <span className={`detail-price ${changeClass}`}>¥{fmt(price)}</span>
         <span className={changeClass}>{detail["涨跌幅"] >= 0 ? "+" : ""}{fmt(detail["涨跌额"])}</span>

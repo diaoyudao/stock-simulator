@@ -67,6 +67,17 @@ async def _ensure_tables(db: aiosqlite.Connection):
             sort_order INTEGER NOT NULL DEFAULT 0
         );
         INSERT OR IGNORE INTO watchlist_groups (id, name, sort_order) VALUES (1, '我的自选', 0);
+        CREATE TABLE IF NOT EXISTS price_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            condition TEXT NOT NULL CHECK(condition IN ('above', 'below', 'change_up', 'change_down')),
+            value REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'triggered', 'cancelled')),
+            created_at REAL NOT NULL,
+            triggered_at REAL,
+            message TEXT
+        );
     """)
     # 为 watchlist 表添加 group_id 列（兼容已有数据库）
     try:
@@ -600,3 +611,81 @@ async def move_to_group(code: str, group_id: int) -> dict:
         return {"success": True}
     finally:
         await db.close()
+
+
+# ─── 涨跌提醒 ───
+
+async def create_alert(code: str, name: str, condition: str, value: float) -> dict:
+    if condition not in ("above", "below", "change_up", "change_down"):
+        return {"error": "条件类型无效"}
+    db = await _get_db()
+    try:
+        await db.execute(
+            "INSERT INTO price_alerts (code, name, condition, value, status, created_at) VALUES (?, ?, ?, ?, 'active', ?)",
+            (code, name, condition, value, time.time()),
+        )
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def get_alerts(status: str | None = None) -> list[dict]:
+    db = await _get_db()
+    try:
+        if status in ("active", "triggered", "cancelled"):
+            cur = await db.execute("SELECT * FROM price_alerts WHERE status = ? ORDER BY created_at DESC", (status,))
+        else:
+            cur = await db.execute("SELECT * FROM price_alerts ORDER BY created_at DESC")
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def cancel_alert(alert_id: int) -> dict:
+    db = await _get_db()
+    try:
+        await db.execute("UPDATE price_alerts SET status = 'cancelled' WHERE id = ? AND status = 'active'", (alert_id,))
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def check_alerts(price_map: dict[str, float]) -> list[dict]:
+    """检查提醒规则，返回触发的提醒列表。"""
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT * FROM price_alerts WHERE status = 'active'")
+        alerts = await cur.fetchall()
+    finally:
+        await db.close()
+
+    triggered = []
+    for alert in alerts:
+        current_price = price_map.get(alert["code"])
+        if current_price is None:
+            continue
+
+        hit = False
+        message = ""
+        if alert["condition"] == "above" and current_price >= alert["value"]:
+            hit = True
+            message = f"{alert['name']} 当前价 {current_price:.2f} 已达到目标价 {alert['value']:.2f}"
+        elif alert["condition"] == "below" and current_price <= alert["value"]:
+            hit = True
+            message = f"{alert['name']} 当前价 {current_price:.2f} 已跌破目标价 {alert['value']:.2f}"
+
+        if hit:
+            db2 = await _get_db()
+            try:
+                await db2.execute(
+                    "UPDATE price_alerts SET status = 'triggered', triggered_at = ?, message = ? WHERE id = ?",
+                    (time.time(), message, alert["id"]),
+                )
+                await db2.commit()
+            finally:
+                await db2.close()
+            triggered.append({"id": alert["id"], "code": alert["code"], "name": alert["name"], "message": message})
+
+    return triggered

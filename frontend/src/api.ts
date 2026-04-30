@@ -250,4 +250,16 @@ export const api = {
     request("/trade/snapshot", { method: "POST" }),
   getIndices: () =>
     request<{ code: string; name: string; current: number; yesterday: number; change_pct: number }[]>("/market/indices"),
+  createAlert: (code: string, name: string, condition: string, value: number) =>
+    request("/trade/alert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name, condition, value }),
+    }),
+  getAlerts: (status?: string) => {
+    const qs = status ? `?status=${status}` : "";
+    return request<{ id: number; code: string; name: string; condition: string; value: number; status: string; created_at: number; triggered_at: number | null; message: string | null }[]>(`/trade/alerts${qs}`);
+  },
+  cancelAlert: (id: number) =>
+    request(`/trade/alert/${id}/cancel`, { method: "POST" }),
 };

@@ -598,6 +598,30 @@ body {
   cursor: not-allowed;
 }
 
+.trade-mode {
+  margin-left: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.cancel-btn {
+  padding: 3px 10px;
+  border-radius: 3px;
+  background: var(--loss);
+  color: #fff;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  opacity: 0.85;
+}
+
 .trading-status {
   font-size: 13px;
   color: var(--loss);

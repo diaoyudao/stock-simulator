@@ -114,6 +114,19 @@ export interface MarketStatus {
   sessions: { name: string; start: string; end: string }[];
 }
 
+export interface PendingOrder {
+  id: number;
+  code: string;
+  name: string;
+  action: "buy" | "sell";
+  quantity: number;
+  target_price: number;
+  status: "pending" | "filled" | "cancelled";
+  created_at: number;
+  filled_at: number | null;
+  filled_price: number | null;
+}
+
 export interface Dashboard {
   account: AccountInfo;
   positions: Position[];
@@ -169,4 +182,18 @@ export const api = {
     }),
   getMarketStatus: () => request<MarketStatus>("/trade/market-status"),
   getDashboard: () => request<Dashboard>("/trade/dashboard"),
+  createOrder: (code: string, name: string, action: "buy" | "sell", quantity: number, target_price: number) =>
+    request("/trade/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name, action, quantity, target_price }),
+    }),
+  getOrders: (status?: string) => {
+    const qs = status ? `?status=${status}` : "";
+    return request<PendingOrder[]>(`/trade/orders${qs}`);
+  },
+  cancelOrder: (id: number) =>
+    request(`/trade/order/${id}/cancel`, { method: "POST" }),
+  checkOrders: () =>
+    request<{ filled_count: number; filled_orders: any[] }>("/trade/orders/check", { method: "POST" }),
 };

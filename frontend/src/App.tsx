@@ -4,7 +4,7 @@ import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChar
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
 import "./App.css";
 
-type Tab = "market" | "watchlist" | "sectors" | "positions" | "transactions";
+type Tab = "market" | "watchlist" | "sectors" | "positions" | "orders" | "transactions";
 
 // 全局共享交易时间，避免每个组件创建独立 interval
 const TradingTimeContext = createContext<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
@@ -110,9 +110,9 @@ function AppInner() {
         {account && <AccountBar account={account} />}
       </header>
       <nav className="tabs">
-        {(["market", "watchlist", "sectors", "positions", "transactions"] as Tab[]).map((t) => (
+        {(["market", "watchlist", "sectors", "positions", "orders", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : "交易记录"}
+            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : t === "orders" ? "委托单" : "交易记录"}
           </button>
         ))}
         <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置账户</button>
@@ -122,6 +122,7 @@ function AppInner() {
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
+        {tab === "orders" && <OrdersTab onTrade={refresh} />}
         {tab === "transactions" && <TransactionsTab transactions={transactions} onFilter={handleTxFilter} />}
       </main>
     </div>
@@ -496,6 +497,66 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
   );
 }
 
+function OrdersTab({ onTrade }: { onTrade: () => void }) {
+  const [orders, setOrders] = useState<PendingOrder[]>([]);
+  const [statusFilter, setStatusFilter] = useState("pending");
+
+  const load = useCallback(async () => {
+    const data = await api.getOrders(statusFilter || undefined);
+    setOrders(data);
+    // 顺便触发委托单检查
+    if (statusFilter === "pending") {
+      await api.checkOrders();
+    }
+  }, [statusFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCancel = async (id: number) => {
+    const res = await api.cancelOrder(id);
+    if (res.success) load();
+    else alert(res.error);
+  };
+
+  const fmtTime = (ts: number) => new Date(ts * 1000).toLocaleString();
+
+  return (
+    <div>
+      <div className="filters">
+        <label>状态<select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="pending">待成交</option>
+          <option value="filled">已成交</option>
+          <option value="cancelled">已撤单</option>
+          <option value="">全部</option>
+        </select></label>
+        <button onClick={load}>刷新</button>
+      </div>
+      {orders.length === 0 ? <div className="empty">暂无委托单</div> : (
+        <table className="stock-table">
+          <thead>
+            <tr><th>时间</th><th>操作</th><th>代码</th><th>名称</th><th>数量</th><th>委托价</th><th>状态</th><th>成交价</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr key={o.id}>
+                <td>{fmtTime(o.created_at)}</td>
+                <td className={o.action === "buy" ? "buy-label" : "sell-label"}>{o.action === "buy" ? "买入" : "卖出"}</td>
+                <td>{o.code}</td>
+                <td>{o.name}</td>
+                <td>{o.quantity}</td>
+                <td>¥{o.target_price.toFixed(3)}</td>
+                <td>{o.status === "pending" ? "待成交" : o.status === "filled" ? "已成交" : "已撤单"}</td>
+                <td>{o.filled_price ? `¥${o.filled_price.toFixed(3)}` : "-"}</td>
+                <td>{o.status === "pending" && <button className="cancel-btn" onClick={() => handleCancel(o.id)}>撤单</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // ============ Stock Detail Page ============
 
 function StockDetail({ code, positions, onBack, onTrade }: {
@@ -517,6 +578,8 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   const chartApiRef = useRef<IChartApi | null>(null);
   const [tradeAction, setTradeAction] = useState<"buy" | "sell">("buy");
   const [tradeQty, setTradeQty] = useState(100);
+  const [tradeMode, setTradeMode] = useState<"market" | "limit">("market");
+  const [limitPrice, setLimitPrice] = useState(0);
 
   const pos = positions.find((p) => p.code === code);
 
@@ -747,10 +810,15 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   };
 
   const executeTrade = async () => {
-    if (tradeAction === "buy") {
-      await api.buy(code, detail["名称"], tradeQty);
+    if (tradeMode === "limit") {
+      const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice);
+      if (res.error) { alert(res.error); return; }
+    } else if (tradeAction === "buy") {
+      const res = await api.buy(code, detail["名称"], tradeQty);
+      if (res.error) { alert(res.error); return; }
     } else {
-      await api.sell(code, tradeQty);
+      const res = await api.sell(code, tradeQty);
+      if (res.error) { alert(res.error); return; }
     }
     setTradeQty(100);
     onTrade();
@@ -828,13 +896,22 @@ function StockDetail({ code, positions, onBack, onTrade }: {
         <div className="detail-trade-row">
           <button className={tradeAction === "buy" ? "detail-buy active" : "detail-buy"} onClick={() => setTradeAction("buy")} disabled={!isTradingTime}>买入</button>
           <button className={tradeAction === "sell" ? "detail-sell active" : "detail-sell"} onClick={() => setTradeAction("sell")} disabled={!isTradingTime}>卖出</button>
+          <select className="trade-mode" value={tradeMode} onChange={(e) => setTradeMode(e.target.value as "market" | "limit")}>
+            <option value="market">市价</option>
+            <option value="limit">限价</option>
+          </select>
         </div>
         <div className="detail-trade-row">
           <span>当前价: ¥{fmt(price)}</span>
+          {tradeMode === "limit" && (
+            <label>委托价<input type="number" value={limitPrice} step={0.01} min={0.01} onChange={(e) => setLimitPrice(Number(e.target.value))} /></label>
+          )}
           <label>数量(股)<input type="number" value={tradeQty} step={100} min={100} onChange={(e) => setTradeQty(Math.max(100, Math.round(Number(e.target.value) / 100) * 100))} /></label>
-          <span>金额: ¥{(tradeQty * price).toFixed(2)}</span>
+          <span>金额: ¥{(tradeQty * (tradeMode === "limit" ? limitPrice : price)).toFixed(2)}</span>
         </div>
-        <button className="detail-confirm" onClick={executeTrade} disabled={!isTradingTime}>确认{tradeAction === "buy" ? "买入" : "卖出"}</button>
+        <button className="detail-confirm" onClick={executeTrade} disabled={!isTradingTime}>
+          {tradeMode === "market" ? "确认" : "提交委托"}{tradeAction === "buy" ? "买入" : "卖出"}
+        </button>
       </div>
     </div>
   );

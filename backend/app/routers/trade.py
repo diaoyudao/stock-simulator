@@ -6,6 +6,7 @@ from app.services.market_data import get_spot_data
 from app.services.trading import (
     buy_stock, sell_stock, get_account, get_positions, get_transactions, reset_account,
     add_watchlist, remove_watchlist, get_watchlist,
+    create_order, get_orders, cancel_order, check_and_fill_orders,
 )
 
 router = APIRouter()
@@ -246,6 +247,14 @@ class WatchRequest(BaseModel):
     name: str = ""
 
 
+class OrderRequest(BaseModel):
+    code: str
+    name: str = ""
+    action: str  # "buy" or "sell"
+    quantity: int
+    target_price: float
+
+
 @router.get("/watchlist")
 async def watchlist():
     items = await get_watchlist()
@@ -270,3 +279,29 @@ async def watchlist_add(req: WatchRequest):
 @router.post("/watchlist/remove")
 async def watchlist_remove(req: WatchRequest):
     return await remove_watchlist(req.code)
+
+
+@router.post("/order")
+async def create_limit_order(req: OrderRequest):
+    ok, msg = _check_trading_time()
+    if not ok:
+        return {"error": f"非交易时间（{msg}）"}
+    return await create_order(req.code, req.name, req.action, req.quantity, req.target_price)
+
+
+@router.get("/orders")
+async def orders(status: str | None = Query(None)):
+    return await get_orders(status)
+
+
+@router.post("/order/{order_id}/cancel")
+async def cancel_limit_order(order_id: int):
+    return await cancel_order(order_id)
+
+
+@router.post("/orders/check")
+async def check_orders():
+    """手动触发委托单检查（前端轮询调用）。"""
+    price_map = _build_price_map()
+    filled = await check_and_fill_orders(price_map)
+    return {"filled_count": len(filled), "filled_orders": filled}

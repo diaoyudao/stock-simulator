@@ -573,7 +573,8 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
     url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
     scale_map = {"daily": "240", "weekly": "1200"}
     scale = scale_map.get(period, "240")
-    datalen = "250" if period == "monthly" else "120"
+    datalen_map = {"daily": "250", "weekly": "150", "monthly": "500"}
+    datalen = datalen_map.get(period, "250")
 
     try:
         r = _session.get(url, params={

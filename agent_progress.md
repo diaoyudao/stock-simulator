@@ -151,3 +151,8 @@
 ### Decisions
 - **本地硬编码节假日** vs 外部API：外部API（timor.tech）有CF防护，服务端无法访问；本地数据更稳定快速，每年更新一次即可
 - **后端统一判断**：前端仅做UI展示，交易时间判断由后端 `_check_trading_time()` 统一控制
+
+### Done
+- 提取方案A+B为可复用Claude Code技能：
+  - `kanban-flow`（看板流转）：task_tree.json + agent_progress.md + init.sh 标准化会话流程
+  - `hierarchical-decomposition`（层级分解）：Goal→Task→Acceptance 三层拆解 + 依赖管理 + 发散收敛

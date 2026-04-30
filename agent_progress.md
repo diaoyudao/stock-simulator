@@ -156,3 +156,17 @@
 - 提取方案A+B为可复用Claude Code技能：
   - `kanban-flow`（看板流转）：task_tree.json + agent_progress.md + init.sh 标准化会话流程
   - `hierarchical-decomposition`（层级分解）：Goal→Task→Acceptance 三层拆解 + 依赖管理 + 发散收敛
+
+## Session 10 — 2026-04-30
+
+### Done
+- 规划6大新功能模块，更新 task_tree.json v2：
+  - g6: 技术指标（MA/MACD/KDJ/RSI/BOLL）— 3个Task
+  - g7: 委托单/限价交易 — 3个Task
+  - g8: 资金曲线/收益统计 — 3个Task
+  - g9: 自选股分组 — 2个Task
+  - g10: 收益排行/模拟比赛 — 2个Task
+  - g11: 消息通知（涨跌提醒）— 2个Task
+
+### Current State
+- 新功能开发启动，从 g6 技术指标开始

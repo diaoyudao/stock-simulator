@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "project": "StockSimulator - A股低价股模拟炒股",
   "goals": [
     {
@@ -22,11 +22,11 @@
         },
         {
           "id": "t2",
-          "title": "新浪财经行情接口封装（原 AKShare 不可用，发现替代方案）",
+          "title": "新浪财经行情接口封装",
           "kanban": "done",
           "acceptance": [
             { "step": "获取全市场实时行情并返回 JSON", "passes": true },
-            { "step": "请求频率控制（0.3秒间隔）", "passes": true },
+            { "step": "请求频率控制", "passes": true },
             { "step": "数据缓存（60秒TTL）", "passes": true }
           ],
           "discovered_in": "init",
@@ -38,7 +38,7 @@
           "kanban": "done",
           "acceptance": [
             { "step": "输入股票代码返回K线数据", "passes": true },
-            { "step": "支持通过新浪API获取", "passes": true }
+            { "step": "支持日K/周K/月K", "passes": true }
           ],
           "discovered_in": "init",
           "completed_in": "session-1"
@@ -172,6 +172,214 @@
           "completed_in": "session-1"
         }
       ]
+    },
+    {
+      "id": "g6",
+      "title": "技术指标 — K线图技术分析",
+      "state": "expanded",
+      "priority": 6,
+      "tasks": [
+        {
+          "id": "t12",
+          "title": "技术指标计算模块 — 前端 utils/indicators.ts",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "MA(n) 计算函数，支持任意周期", "passes": false },
+            { "step": "MACD(12,26,9) 返回 DIF/DEA/MACD柱", "passes": false },
+            { "step": "KDJ(9,3,3) 返回 K/D/J 值", "passes": false },
+            { "step": "RSI(6,12,24) 返回三周期值", "passes": false },
+            { "step": "BOLL(20,2) 返回上/中/下轨", "passes": false }
+          ]
+        },
+        {
+          "id": "t13",
+          "title": "主图叠加指标 — MA均线 + BOLL布林带",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "MA 5/10/20/60日均线叠加到K线主图", "passes": false },
+            { "step": "BOLL 上/中/下轨叠加到K线主图", "passes": false },
+            { "step": "指标可切换显隐", "passes": false },
+            { "step": "切换日K/周K/月K时指标重新计算", "passes": false }
+          ]
+        },
+        {
+          "id": "t14",
+          "title": "副图指标 — MACD/KDJ/RSI",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "MACD副图：DIF/DEA线 + 红绿MACD柱", "passes": false },
+            { "step": "KDJ副图：K/D/J三线 + 超买超卖区域", "passes": false },
+            { "step": "RSI副图：6/12/24日三条线 + 30/70参考线", "passes": false },
+            { "step": "副图切换面板，同一时间显示一个副图", "passes": false }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g7",
+      "title": "委托单/限价交易",
+      "state": "expanded",
+      "priority": 7,
+      "tasks": [
+        {
+          "id": "t15",
+          "title": "委托单数据模型 + 后端API",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "pending_orders表（id/code/name/action/quantity/price/status/created_at）", "passes": false },
+            { "step": "POST /trade/order 创建限价委托", "passes": false },
+            { "step": "GET /trade/orders 查询委托列表", "passes": false },
+            { "step": "DELETE /trade/order/:id 撤单", "passes": false }
+          ]
+        },
+        {
+          "id": "t16",
+          "title": "委托单触发引擎 — 行情更新时自动成交",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "行情刷新时扫描 pending_orders", "passes": false },
+            { "step": "买入委托：当前价 ≤ 委托价时自动成交", "passes": false },
+            { "step": "卖出委托：当前价 ≥ 委托价时自动成交", "passes": false },
+            { "step": "成交后更新持仓/资金/委托状态", "passes": false }
+          ]
+        },
+        {
+          "id": "t17",
+          "title": "委托单前端UI — 限价交易 + 委托列表",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "详情页限价买入/卖出面板（输入目标价）", "passes": false },
+            { "step": "委托单列表页（状态/价格/时间/撤单）", "passes": false },
+            { "step": "委托成交时前端提示通知", "passes": false }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g8",
+      "title": "资金曲线/收益统计",
+      "state": "expanded",
+      "priority": 8,
+      "tasks": [
+        {
+          "id": "t18",
+          "title": "每日资产快照 — 后端",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "daily_snapshots表（date/cash/positions_value/total）", "passes": false },
+            { "step": "交易时自动记录当日快照", "passes": false },
+            { "step": "GET /trade/daily-snapshots 查询历史快照", "passes": false },
+            { "step": "回填历史快照（从transactions推算）", "passes": false }
+          ]
+        },
+        {
+          "id": "t19",
+          "title": "资金曲线图 — 前端",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "折线图展示总资产变化趋势", "passes": false },
+            { "step": "支持时间范围筛选（1周/1月/3月/全部）", "passes": false },
+            { "step": "显示基准线（初始资金10万）", "passes": false }
+          ]
+        },
+        {
+          "id": "t20",
+          "title": "收益统计面板 — 前端",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "总收益率/年化收益率", "passes": false },
+            { "step": "最大回撤及回撤区间", "passes": false },
+            { "step": "交易胜率/盈亏比", "passes": false },
+            { "step": "平均持仓周期", "passes": false }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g9",
+      "title": "自选股分组",
+      "state": "expanded",
+      "priority": 9,
+      "tasks": [
+        {
+          "id": "t21",
+          "title": "分组数据模型 + 后端API",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "watchlist_groups表（id/name/sort_order）", "passes": false },
+            { "step": "watchlist表加 group_id 字段", "passes": false },
+            { "step": "CRUD接口：创建/重命名/删除分组", "passes": false },
+            { "step": "GET /trade/watchlist 支持 group_id 筛选", "passes": false }
+          ]
+        },
+        {
+          "id": "t22",
+          "title": "分组前端UI",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "分组侧边栏（创建/重命名/删除）", "passes": false },
+            { "step": "按分组查看自选股列表", "passes": false },
+            { "step": "加自选时选择分组", "passes": false },
+            { "step": "默认分组'我的自选'", "passes": false }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g10",
+      "title": "收益排行/模拟比赛",
+      "state": "expanded",
+      "priority": 10,
+      "tasks": [
+        {
+          "id": "t23",
+          "title": "大盘指数对比 — 我的收益 vs 大盘",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "获取上证/深证/创业板指数行情数据", "passes": false },
+            { "step": "收益对比折线图（我的收益 vs 指数涨跌幅）", "passes": false },
+            { "step": "显示跑赢/跑输大盘百分比", "passes": false }
+          ]
+        },
+        {
+          "id": "t24",
+          "title": "排行榜系统 — 多账户 + 收益率排行",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "accounts表支持多账户（name字段）", "passes": false },
+            { "step": "按周期排行（周/月/总收益率）", "passes": false },
+            { "step": "排行榜前端页面", "passes": false }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "g11",
+      "title": "消息通知 — 涨跌提醒",
+      "state": "expanded",
+      "priority": 11,
+      "tasks": [
+        {
+          "id": "t25",
+          "title": "涨跌提醒规则 — 后端",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "price_alerts表（id/code/name/condition/value/status）", "passes": false },
+            { "step": "CRUD接口：创建/查询/删除提醒", "passes": false },
+            { "step": "行情更新时扫描规则，触发时记录通知", "passes": false }
+          ]
+        },
+        {
+          "id": "t26",
+          "title": "通知中心 — 前端",
+          "kanban": "todo",
+          "acceptance": [
+            { "step": "提醒设置面板（目标价/涨跌幅阈值）", "passes": false },
+            { "step": "浏览器 Notification 推送", "passes": false },
+            { "step": "应用内通知中心（历史提醒列表）", "passes": false }
+          ]
+        }
+      ]
     }
   ],
   "discovered_tasks": [
@@ -182,7 +390,7 @@
       "kanban": "done",
       "acceptance": [],
       "discovered_in": "session-1",
-      "reason": "AKShare和东方财富API连接被拒，切换为新浪财经API作为数据源"
+      "reason": "切换为新浪财经API"
     }
   ]
 }

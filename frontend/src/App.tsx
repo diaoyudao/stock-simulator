@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus } from "./api";
-import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
+import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
 import "./App.css";
 
 type Tab = "market" | "watchlist" | "sectors" | "positions" | "transactions";
@@ -506,6 +507,12 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   const { isTradingTime, tradingStatus } = useTradingTime();
   const [detail, setDetail] = useState<StockDetail | null>(null);
   const [klinePeriod, setKlinePeriod] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [klineData, setKlineData] = useState<KLineItem[]>([]);
+  const [indicators, setIndicators] = useState({
+    ma: true,
+    boll: false,
+    subChart: "none" as "none" | "macd" | "kdj" | "rsi",
+  });
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
   const [tradeAction, setTradeAction] = useState<"buy" | "sell">("buy");
@@ -518,19 +525,26 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   }, [code]);
 
   useEffect(() => {
+    api.getHistory(code, klinePeriod).then(setKlineData);
+  }, [code, klinePeriod]);
+
+  useEffect(() => {
     const container = chartRef.current;
-    if (!container) return;
+    if (!container || !klineData.length) return;
     if (chartApiRef.current) {
       chartApiRef.current.remove();
       chartApiRef.current = null;
     }
 
-    // 等容器布局完成后再创建图表
+    const hasSubChart = indicators.subChart !== "none";
+    const mainHeight = hasSubChart ? 240 : 320;
+    const totalHeight = hasSubChart ? 420 : 320;
+
     const raf = requestAnimationFrame(() => {
       if (!container) return;
       const chart = createChart(container, {
         width: container.clientWidth || 800,
-        height: 320,
+        height: totalHeight,
         layout: {
           background: { type: ColorType.Solid, color: "#161b22" },
           textColor: "#c9d1d9",
@@ -561,24 +575,146 @@ function StockDetail({ code, positions, onBack, onTrade }: {
         scaleMargins: { top: 0.8, bottom: 0 },
       });
 
-      api.getHistory(code, klinePeriod).then((data) => {
-        if (!data.length) return;
-        const candleData: CandlestickData[] = data.map((d) => ({
-          time: d.day,
-          open: parseFloat(d.open),
-          high: parseFloat(d.high),
-          low: parseFloat(d.low),
-          close: parseFloat(d.close),
-        }));
-        const volumeData: HistogramData[] = data.map((d) => ({
-          time: d.day,
-          value: parseFloat(d.volume),
-          color: parseFloat(d.close) >= parseFloat(d.open) ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
-        }));
-        candleSeries.setData(candleData);
-        volumeSeries.setData(volumeData);
-        chart.timeScale().fitContent();
-      });
+      const candleData: CandlestickData[] = klineData.map((d) => ({
+        time: d.day,
+        open: parseFloat(d.open),
+        high: parseFloat(d.high),
+        low: parseFloat(d.low),
+        close: parseFloat(d.close),
+      }));
+      const volumeData: HistogramData[] = klineData.map((d) => ({
+        time: d.day,
+        value: parseFloat(d.volume),
+        color: parseFloat(d.close) >= parseFloat(d.open) ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
+      }));
+      candleSeries.setData(candleData);
+      volumeSeries.setData(volumeData);
+
+      // Convert K-line data to CandleData for indicator calculation
+      const cd: CandleData[] = klineData.map((d) => ({
+        time: d.day,
+        open: parseFloat(d.open),
+        high: parseFloat(d.high),
+        low: parseFloat(d.low),
+        close: parseFloat(d.close),
+        volume: parseFloat(d.volume),
+      }));
+
+      // MA 均线
+      if (indicators.ma) {
+        const maColors: Record<number, string> = { 5: "#f0b429", 10: "#2ecc71", 20: "#e74c3c", 60: "#9b59b6" };
+        for (const period of [5, 10, 20, 60] as const) {
+          const maData = calcMA(cd, period);
+          if (maData.length) {
+            const line = chart.addSeries(LineSeries, {
+              color: maColors[period],
+              lineWidth: 1,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              title: `MA${period}`,
+            });
+            line.setData(maData);
+          }
+        }
+      }
+
+      // BOLL 布林带
+      if (indicators.boll) {
+        const bollData = calcBOLL(cd);
+        if (bollData.length) {
+          const upper = chart.addSeries(LineSeries, {
+            color: "#e74c3c",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "BOLL上轨",
+          });
+          const mid = chart.addSeries(LineSeries, {
+            color: "#f0b429",
+            lineWidth: 1,
+            lineStyle: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "BOLL中轨",
+          });
+          const lower = chart.addSeries(LineSeries, {
+            color: "#2ecc71",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "BOLL下轨",
+          });
+          upper.setData(bollData.map((d) => ({ time: d.time, value: d.upper })));
+          mid.setData(bollData.map((d) => ({ time: d.time, value: d.mid })));
+          lower.setData(bollData.map((d) => ({ time: d.time, value: d.lower })));
+        }
+      }
+
+      // 副图指标
+      if (indicators.subChart === "macd") {
+        const macdData = calcMACD(cd);
+        if (macdData.length) {
+          const difLine = chart.addSeries(LineSeries, {
+            color: "#f0b429",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "DIF",
+          }, 1);
+          const deaLine = chart.addSeries(LineSeries, {
+            color: "#58a6ff",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "DEA",
+          }, 1);
+          const macdHist = chart.addSeries(HistogramSeries, {
+            priceLineVisible: false,
+            lastValueVisible: false,
+          }, 1);
+          difLine.setData(macdData.map((d) => ({ time: d.time, value: d.dif })));
+          deaLine.setData(macdData.map((d) => ({ time: d.time, value: d.dea })));
+          macdHist.setData(macdData.map((d) => ({
+            time: d.time,
+            value: d.histogram,
+            color: d.histogram >= 0 ? "rgba(248,81,73,0.6)" : "rgba(63,185,80,0.6)",
+          })));
+        }
+      } else if (indicators.subChart === "kdj") {
+        const kdjData = calcKDJ(cd);
+        if (kdjData.length) {
+          const kLine = chart.addSeries(LineSeries, {
+            color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "K",
+          }, 1);
+          const dLine = chart.addSeries(LineSeries, {
+            color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "D",
+          }, 1);
+          const jLine = chart.addSeries(LineSeries, {
+            color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "J",
+          }, 1);
+          kLine.setData(kdjData.map((d) => ({ time: d.time, value: d.k })));
+          dLine.setData(kdjData.map((d) => ({ time: d.time, value: d.d })));
+          jLine.setData(kdjData.map((d) => ({ time: d.time, value: d.j })));
+        }
+      } else if (indicators.subChart === "rsi") {
+        const rsiData = calcRSI(cd);
+        if (rsiData.length) {
+          const rsi6 = chart.addSeries(LineSeries, {
+            color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI6",
+          }, 1);
+          const rsi12 = chart.addSeries(LineSeries, {
+            color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI12",
+          }, 1);
+          const rsi24 = chart.addSeries(LineSeries, {
+            color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI24",
+          }, 1);
+          rsi6.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi6 })));
+          rsi12.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi12 })));
+          rsi24.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi24 })));
+        }
+      }
+
+      chart.timeScale().fitContent();
     });
 
     const handleResize = () => {
@@ -595,7 +731,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
         chartApiRef.current = null;
       }
     };
-  }, [code, klinePeriod]);
+  }, [klineData, indicators]);
 
   if (!detail) return <div className="loading">加载中...</div>;
 
@@ -658,12 +794,21 @@ function StockDetail({ code, positions, onBack, onTrade }: {
 
       {/* K-line chart */}
       <div className="detail-chart-section">
-        <div className="period-tabs">
-          {(["daily", "weekly", "monthly"] as const).map((p) => (
-            <button key={p} className={klinePeriod === p ? "tab active" : "tab"} onClick={() => setKlinePeriod(p)}>
-              {p === "daily" ? "日K" : p === "weekly" ? "周K" : "月K"}
-            </button>
-          ))}
+        <div className="chart-toolbar">
+          <div className="period-tabs">
+            {(["daily", "weekly", "monthly"] as const).map((p) => (
+              <button key={p} className={klinePeriod === p ? "tab active" : "tab"} onClick={() => setKlinePeriod(p)}>
+                {p === "daily" ? "日K" : p === "weekly" ? "周K" : "月K"}
+              </button>
+            ))}
+          </div>
+          <div className="indicator-tabs">
+            <button className={indicators.ma ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, ma: !p.ma }))}>MA</button>
+            <button className={indicators.boll ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, boll: !p.boll }))}>BOLL</button>
+            <button className={indicators.subChart === "macd" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "macd" ? "none" : "macd" }))}>MACD</button>
+            <button className={indicators.subChart === "kdj" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "kdj" ? "none" : "kdj" }))}>KDJ</button>
+            <button className={indicators.subChart === "rsi" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "rsi" ? "none" : "rsi" }))}>RSI</button>
+          </div>
         </div>
         <div ref={chartRef} className="chart-container" />
       </div>

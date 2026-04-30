@@ -61,7 +61,18 @@ async def _ensure_tables(db: aiosqlite.Connection):
             positions_value REAL NOT NULL,
             total REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS watchlist_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO watchlist_groups (id, name, sort_order) VALUES (1, '我的自选', 0);
     """)
+    # 为 watchlist 表添加 group_id 列（兼容已有数据库）
+    try:
+        await db.execute("ALTER TABLE watchlist ADD COLUMN group_id INTEGER DEFAULT 1")
+    except Exception:
+        pass  # 列已存在
 
 
 async def get_account() -> dict:
@@ -206,12 +217,12 @@ async def reset_account() -> dict:
         await db.close()
 
 
-async def add_watchlist(code: str, name: str) -> dict:
+async def add_watchlist(code: str, name: str, group_id: int = 1) -> dict:
     db = await _get_db()
     try:
         await db.execute(
-            "INSERT OR IGNORE INTO watchlist (code, name, added_at) VALUES (?, ?, ?)",
-            (code, name, time.time()),
+            "INSERT OR IGNORE INTO watchlist (code, name, added_at, group_id) VALUES (?, ?, ?, ?)",
+            (code, name, time.time(), group_id),
         )
         await db.commit()
         return {"success": True}
@@ -229,10 +240,13 @@ async def remove_watchlist(code: str) -> dict:
         await db.close()
 
 
-async def get_watchlist() -> list[dict]:
+async def get_watchlist(group_id: int | None = None) -> list[dict]:
     db = await _get_db()
     try:
-        cur = await db.execute("SELECT code, name FROM watchlist ORDER BY added_at")
+        if group_id:
+            cur = await db.execute("SELECT code, name, group_id FROM watchlist WHERE group_id = ? ORDER BY added_at", (group_id,))
+        else:
+            cur = await db.execute("SELECT code, name, group_id FROM watchlist ORDER BY added_at")
         return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()
@@ -527,5 +541,62 @@ async def get_performance_stats() -> dict:
             "avg_holding_days": round(avg_holding_days, 1),
             "snapshot_count": len(snapshots),
         }
+    finally:
+        await db.close()
+
+
+# ─── 自选股分组 ───
+
+async def get_groups() -> list[dict]:
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT * FROM watchlist_groups ORDER BY sort_order, id")
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def create_group(name: str) -> dict:
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT MAX(sort_order) as m FROM watchlist_groups")
+        row = await cur.fetchone()
+        sort_order = (row["m"] or 0) + 1
+        await db.execute("INSERT INTO watchlist_groups (name, sort_order) VALUES (?, ?)", (name, sort_order))
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def rename_group(group_id: int, name: str) -> dict:
+    db = await _get_db()
+    try:
+        await db.execute("UPDATE watchlist_groups SET name = ? WHERE id = ?", (name, group_id))
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def delete_group(group_id: int) -> dict:
+    if group_id == 1:
+        return {"error": "不能删除默认分组"}
+    db = await _get_db()
+    try:
+        await db.execute("UPDATE watchlist SET group_id = 1 WHERE group_id = ?", (group_id,))
+        await db.execute("DELETE FROM watchlist_groups WHERE id = ?", (group_id,))
+        await db.commit()
+        return {"success": True}
+    finally:
+        await db.close()
+
+
+async def move_to_group(code: str, group_id: int) -> dict:
+    db = await _get_db()
+    try:
+        await db.execute("UPDATE watchlist SET group_id = ? WHERE code = ?", (group_id, code))
+        await db.commit()
+        return {"success": True}
     finally:
         await db.close()

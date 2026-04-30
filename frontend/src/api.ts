@@ -106,6 +106,13 @@ export interface WatchlistItem {
   price: number;
   change_pct: number;
   change_amt: number;
+  group_id: number;
+}
+
+export interface WatchlistGroup {
+  id: number;
+  name: string;
+  sort_order: number;
 }
 
 export interface MarketStatus {
@@ -184,18 +191,40 @@ export const api = {
       body: JSON.stringify({ code, quantity }),
     }),
   reset: () => request("/trade/reset", { method: "POST" }),
-  getWatchlist: () => request<WatchlistItem[]>("/trade/watchlist"),
-  addWatchlist: (code: string, name: string) =>
+  getWatchlist: (group_id?: number) => {
+    const qs = group_id ? `?group_id=${group_id}` : "";
+    return request<WatchlistItem[]>(`/trade/watchlist${qs}`);
+  },
+  addWatchlist: (code: string, name: string, group_id = 1) =>
     request("/trade/watchlist/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, name }),
+      body: JSON.stringify({ code, name, group_id }),
     }),
   removeWatchlist: (code: string) =>
     request("/trade/watchlist/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
+    }),
+  moveWatchlist: (code: string, group_id: number) =>
+    request("/trade/watchlist/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, group_id }),
+    }),
+  getGroups: () => request<WatchlistGroup[]>("/trade/groups"),
+  createGroup: (name: string) =>
+    request("/trade/groups/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  deleteGroup: (group_id: number) =>
+    request("/trade/groups/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_id }),
     }),
   getMarketStatus: () => request<MarketStatus>("/trade/market-status"),
   getDashboard: () => request<Dashboard>("/trade/dashboard"),

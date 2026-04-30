@@ -360,13 +360,22 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
 function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string) => void; onTrade: () => void }) {
   const { isTradingTime } = useTradingTime();
   const [items, setItems] = useState<WatchlistItem[]>([]);
+  const [groups, setGroups] = useState<WatchlistGroup[]>([]);
+  const [activeGroup, setActiveGroup] = useState<number>(0); // 0 = all
   const [loading, setLoading] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
 
   const fetchList = useCallback(() => {
     setLoading(true);
-    api.getWatchlist().then(setItems).finally(() => setLoading(false));
+    const gid = activeGroup || undefined;
+    api.getWatchlist(gid).then(setItems).finally(() => setLoading(false));
+  }, [activeGroup]);
+
+  const fetchGroups = useCallback(() => {
+    api.getGroups().then(setGroups);
   }, []);
 
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
   useEffect(() => { fetchList(); }, [fetchList]);
 
   const handleRemove = async (code: string) => {
@@ -374,29 +383,71 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
     fetchList();
   };
 
-  if (loading) return <div className="loading">加载中...</div>;
-  if (items.length === 0) return <div className="empty">暂无自选股，在行情页点击"自选"添加</div>;
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    await api.createGroup(newGroupName.trim());
+    setNewGroupName("");
+    fetchGroups();
+  };
+
+  const handleDeleteGroup = async (id: number) => {
+    await api.deleteGroup(id);
+    if (activeGroup === id) setActiveGroup(0);
+    fetchGroups();
+    fetchList();
+  };
+
+  const handleMove = async (code: string, groupId: number) => {
+    await api.moveWatchlist(code, groupId);
+    fetchList();
+  };
+
+  if (loading && items.length === 0) return <div className="loading">加载中...</div>;
+
   return (
-    <table className="stock-table">
-      <thead>
-        <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>操作</th></tr>
-      </thead>
-      <tbody>
-        {items.map((s) => (
-          <tr key={s.code}>
-            <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.code}</button></td>
-            <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.name}</button></td>
-            <td className="price">{s.price.toFixed(2)}</td>
-            <td className={s.change_pct >= 0 ? "profit" : "loss"}>{s.change_pct >= 0 ? "+" : ""}{s.change_pct.toFixed(2)}%</td>
-            <td className={s.change_amt >= 0 ? "profit" : "loss"}>{s.change_amt >= 0 ? "+" : ""}{s.change_amt.toFixed(2)}</td>
-            <td>
-              <TradeButton code={s.code} name={s.name} price={s.price} onDone={onTrade} />
-              <button className="remove-btn" onClick={() => handleRemove(s.code)}>删除</button>
-            </td>
-          </tr>
+    <div>
+      {/* 分组栏 */}
+      <div className="group-bar">
+        <button className={activeGroup === 0 ? "tab active" : "tab"} onClick={() => setActiveGroup(0)}>全部</button>
+        {groups.map((g) => (
+          <button key={g.id} className={activeGroup === g.id ? "tab active" : "tab"} onClick={() => setActiveGroup(g.id)}>
+            {g.name}
+            {g.id !== 1 && <span className="group-del" onClick={(e) => { e.stopPropagation(); handleDeleteGroup(g.id); }}>x</span>}
+          </button>
         ))}
-      </tbody>
-    </table>
+        <input className="group-input" placeholder="新分组" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()} />
+        <button className="tab" onClick={handleCreateGroup}>+</button>
+      </div>
+
+      {items.length === 0 ? <div className="empty">暂无自选股，在行情页点击"自选"添加</div> : (
+        <table className="stock-table">
+          <thead>
+            <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            {items.map((s) => (
+              <tr key={s.code}>
+                <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.code}</button></td>
+                <td><button className="stock-link" onClick={() => onSelectStock(s.code)}>{s.name}</button></td>
+                <td className="price">{s.price.toFixed(2)}</td>
+                <td className={s.change_pct >= 0 ? "profit" : "loss"}>{s.change_pct >= 0 ? "+" : ""}{s.change_pct.toFixed(2)}%</td>
+                <td className={s.change_amt >= 0 ? "profit" : "loss"}>{s.change_amt >= 0 ? "+" : ""}{s.change_amt.toFixed(2)}</td>
+                <td>
+                  <TradeButton code={s.code} name={s.name} price={s.price} onDone={onTrade} />
+                  <button className="remove-btn" onClick={() => handleRemove(s.code)}>删除</button>
+                  {groups.length > 1 && (
+                    <select className="group-select" value={s.group_id} onChange={(e) => handleMove(s.code, Number(e.target.value))}>
+                      {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

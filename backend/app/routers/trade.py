@@ -8,6 +8,7 @@ from app.services.trading import (
     add_watchlist, remove_watchlist, get_watchlist,
     create_order, get_orders, cancel_order, check_and_fill_orders,
     record_daily_snapshot, get_daily_snapshots, get_performance_stats,
+    get_groups, create_group, rename_group, delete_group, move_to_group,
 )
 
 router = APIRouter()
@@ -243,11 +244,6 @@ async def reset():
     return await reset_account()
 
 
-class WatchRequest(BaseModel):
-    code: str
-    name: str = ""
-
-
 class OrderRequest(BaseModel):
     code: str
     name: str = ""
@@ -257,8 +253,8 @@ class OrderRequest(BaseModel):
 
 
 @router.get("/watchlist")
-async def watchlist():
-    items = await get_watchlist()
+async def watchlist(group_id: int | None = Query(None)):
+    items = await get_watchlist(group_id)
     if not items:
         return []
     price_map = {s["代码"]: s for s in get_spot_data()}
@@ -272,14 +268,60 @@ async def watchlist():
     return result
 
 
+class WatchRequest(BaseModel):
+    code: str
+    name: str = ""
+    group_id: int = 1
+
+
 @router.post("/watchlist/add")
 async def watchlist_add(req: WatchRequest):
-    return await add_watchlist(req.code, req.name)
+    return await add_watchlist(req.code, req.name, req.group_id)
 
 
 @router.post("/watchlist/remove")
 async def watchlist_remove(req: WatchRequest):
     return await remove_watchlist(req.code)
+
+
+# ─── 自选股分组 ───
+
+@router.get("/groups")
+async def groups():
+    return await get_groups()
+
+
+class GroupNameRequest(BaseModel):
+    name: str
+
+
+class GroupIdRequest(BaseModel):
+    group_id: int
+
+
+@router.post("/groups/create")
+async def groups_create(req: GroupNameRequest):
+    return await create_group(req.name)
+
+
+@router.post("/groups/rename")
+async def groups_rename(group_id: int, req: GroupNameRequest):
+    return await rename_group(group_id, req.name)
+
+
+@router.post("/groups/delete")
+async def groups_delete(req: GroupIdRequest):
+    return await delete_group(req.group_id)
+
+
+class MoveRequest(BaseModel):
+    code: str
+    group_id: int
+
+
+@router.post("/watchlist/move")
+async def watchlist_move(req: MoveRequest):
+    return await move_to_group(req.code, req.group_id)
 
 
 @router.post("/order")

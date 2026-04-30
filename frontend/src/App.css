@@ -658,6 +658,45 @@ body {
   font-weight: 700;
 }
 
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.group-del {
+  margin-left: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.group-del:hover {
+  color: var(--loss);
+}
+
+.group-input {
+  width: 80px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.group-select {
+  padding: 2px 4px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
 .trading-status {
   font-size: 13px;
   color: var(--loss);

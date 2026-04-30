@@ -612,14 +612,16 @@ function OrdersTab({ onTrade }: { onTrade: () => void }) {
 function AnalysisTab() {
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [stats, setStats] = useState<PerformanceStats | null>(null);
+  const [indices, setIndices] = useState<{ code: string; name: string; current: number; yesterday: number; change_pct: number }[]>([]);
   const [range, setRange] = useState(90);
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
 
   const loadData = useCallback(async () => {
-    const [sn, st] = await Promise.all([api.getDailySnapshots(range), api.getPerformance()]);
-    setSnapshots(sn.reverse()); // oldest first for chart
+    const [sn, st, idx] = await Promise.all([api.getDailySnapshots(range), api.getPerformance(), api.getIndices()]);
+    setSnapshots(sn.reverse());
     setStats(st);
+    setIndices(idx);
   }, [range]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -731,6 +733,29 @@ function AnalysisTab() {
               <div className="stat-value">{stats.avg_holding_days}</div>
             </div>
           </div>
+
+          {/* 大盘对比 */}
+          {indices.length > 0 && stats && (
+            <div className="index-compare">
+              <h3>大盘对比</h3>
+              <div className="stats-grid">
+                {indices.map((idx) => {
+                  const outperform = stats.total_return - idx.change_pct;
+                  return (
+                    <div key={idx.code} className="stat-card">
+                      <div className="stat-label">{idx.name}</div>
+                      <div className={`stat-value ${idx.change_pct >= 0 ? "profit" : "loss"}`}>
+                        {idx.change_pct >= 0 ? "+" : ""}{idx.change_pct}%
+                      </div>
+                      <div className={`stat-detail ${outperform >= 0 ? "profit" : "loss"}`}>
+                        {outperform >= 0 ? "跑赢" : "跑输"} {Math.abs(outperform).toFixed(2)}%
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

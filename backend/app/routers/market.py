@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query
 from app.services.market_data import (
     filter_low_price, get_stock_detail, get_stock_history,
     get_sector_list, get_sector_overview, compute_consecutive_days,
+    get_index_data,
 )
 
 router = APIRouter()
@@ -90,3 +91,8 @@ def history(
     start_date: str = Query("20250101"),
 ):
     return get_stock_history(code, period=period, start_date=start_date)
+
+
+@router.get("/indices")
+def indices():
+    return get_index_data()

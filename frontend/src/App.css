@@ -697,6 +697,21 @@ body {
   color: var(--text);
 }
 
+.index-compare {
+  padding: 12px 16px;
+}
+
+.index-compare h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.stat-detail {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .trading-status {
   font-size: 13px;
   color: var(--loss);

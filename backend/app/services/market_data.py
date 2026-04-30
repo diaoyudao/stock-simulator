@@ -553,3 +553,47 @@ def _aggregate_monthly(daily_data: list[dict]) -> list[dict]:
             m["close"] = d["close"]
             m["volume"] = str(int(float(m["volume"])) + int(float(d["volume"])))
     return list(months.values())
+
+
+# ─── 大盘指数 ───
+
+_INDEX_CODES = {
+    "sh000001": "上证指数",
+    "sz399001": "深证成指",
+    "sz399006": "创业板指",
+}
+
+
+def get_index_data() -> list[dict]:
+    """获取主要大盘指数当前数据。"""
+    symbols = ",".join(_INDEX_CODES.keys())
+    try:
+        r = _session.get(f"https://hq.sinajs.cn/list={symbols}", headers={
+            "Referer": "https://finance.sina.com.cn",
+        }, timeout=10)
+        r.encoding = "gbk"
+        lines = r.text.strip().split("\n")
+
+        result = []
+        for line in lines:
+            parts = line.split('="')
+            if len(parts) < 2:
+                continue
+            code = parts[0].split("hq_str_")[1]
+            data = parts[1].rstrip('";').split(",")
+            if len(data) < 32:
+                continue
+            name = data[0]
+            yesterday = float(data[2])
+            current = float(data[3])
+            change_pct = (current - yesterday) / yesterday * 100 if yesterday else 0
+            result.append({
+                "code": code,
+                "name": name,
+                "current": current,
+                "yesterday": yesterday,
+                "change_pct": round(change_pct, 2),
+            })
+        return result
+    except Exception:
+        return []

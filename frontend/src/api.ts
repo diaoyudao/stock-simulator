@@ -248,4 +248,6 @@ export const api = {
     request<PerformanceStats>("/trade/performance"),
   recordSnapshot: () =>
     request("/trade/snapshot", { method: "POST" }),
+  getIndices: () =>
+    request<{ code: string; name: string; current: number; yesterday: number; change_pct: number }[]>("/market/indices"),
 };

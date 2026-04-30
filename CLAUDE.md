@@ -47,11 +47,12 @@ bash init.sh
 
 ### 前端（`frontend/`）
 
-- 单文件 React 应用：`src/App.tsx`（~540行），`src/api.ts` 为 API 客户端
+- 单文件 React 应用：`src/App.tsx`（~1200行），`src/api.ts` 为 API 客户端（带GET缓存）
 - 无 React Router — 通过 `selectedStock` 状态切换详情页
 - 无状态管理库 — prop 传递 + `useCallback`/`useState`
 - K线图使用 TradingView `lightweight-charts`
 - Vite 将 `/api` 代理到 `http://127.0.0.1:8000`（见 `vite.config.ts`）
+- 移动端自适应：768px + 480px 双断点，Tab栏固定底部
 
 ## 核心设计决策
 
@@ -68,10 +69,13 @@ bash init.sh
 - 行业映射：新浪行业层级（48个行业），取前30个行业构建代码→行业映射
 
 **缓存策略**：
-- 行情数据：内存缓存，60秒 TTL（冷获取约60秒）
+- 行情数据：内存缓存，60秒 TTL，过期前10秒后台预热（用户无冷加载）
 - 行业列表：5分钟 TTL
 - 行业映射：5分钟 TTL（构建约10秒）
-- K线数据：不缓存，按需获取
+- K线数据：60秒 TTL
+- 大盘指数：60秒 TTL
+- 股票代码索引：随行情缓存同步更新，O(1)查找
+- 价格映射：随行情缓存同步更新，避免重复构建
 
 **月K线**：新浪不支持月K周期，`_aggregate_monthly()` 从250条日K数据聚合。
 
@@ -79,7 +83,7 @@ bash init.sh
 
 ## 数据库结构
 
-SQLite 表在 `trading.py:_ensure_tables()` 中内联创建，无迁移系统。
+SQLite 表在 `trading.py:_ensure_tables()` 中内联创建，无迁移系统。全局共享连接，启动时建表一次。
 
 - `account`（id=1, cash REAL, 默认100000）
 - `positions`（code 主键, name, quantity, avg_cost）
@@ -91,3 +95,4 @@ SQLite 表在 `trading.py:_ensure_tables()` 中内联创建，无迁移系统。
 - A股配色：**红涨绿跌**（与美股相反）
 - 交易数量必须为100的整数倍（A股整手规则）
 - `akshare` 在 `requirements.txt` 中但未使用 — 项目已切换到新浪财经 API
+- 部署配置见 `DEPLOY.md`，后端 Docker + 前端 Vercel

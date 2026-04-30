@@ -1,39 +1,84 @@
-# StockSimulator
+# A股低价股模拟炒股
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
+筛选5元以下A股，展示新浪财经实时行情，10万虚拟资金模拟交易。
 
-#### 软件架构
-软件架构说明
+## 功能
 
+- **行情筛选** — 价格/涨跌幅/换手率/市盈率/市净率/量比等多维度筛选，支持行业过滤
+- **实时行情** — 新浪财经+腾讯API双数据源，60秒刷新
+- **模拟交易** — 10万虚拟资金，A股整手规则，限价委托单
+- **K线图表** — 日K/周K/月K，MA/BOLL/MACD/KDJ/RSI指标
+- **自选股** — 分组管理，实时价格追踪
+- **行业板块** — 48个行业涨跌概览，领涨股展示
+- **收益分析** — 资金曲线、收益率统计、大盘指数对比
+- **涨跌提醒** — 价格到达/跌破目标价自动通知
+- **移动端适配** — 响应式布局，手机平板均可使用
 
-#### 安装教程
+## 技术栈
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+| 层 | 技术 |
+|---|------|
+| 前端 | React 19 + TypeScript + Vite + TradingView Lightweight Charts |
+| 后端 | FastAPI + aiosqlite + requests |
+| 数据源 | 新浪财经 API + 腾讯行情 API |
+| 数据库 | SQLite |
 
-#### 使用说明
+## 快速开始
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+```bash
+# 后端
+cd backend
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload
 
-#### 参与贡献
+# 前端
+cd frontend
+npm install
+npm run dev
+```
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+访问 http://localhost:5173
 
+## 项目结构
 
-#### 特技
+```
+backend/
+  main.py                  # FastAPI 入口
+  app/routers/market.py    # 行情接口（筛选/详情/K线/板块/指数）
+  app/routers/trade.py     # 交易接口（账户/持仓/买卖/委托/提醒）
+  app/services/market_data.py  # 数据获取+缓存
+  app/services/trading.py      # 交易逻辑+SQLite持久化
+frontend/
+  src/App.tsx              # 全部UI组件
+  src/App.css              # 样式（含移动端适配）
+  src/api.ts               # API客户端（带缓存）
+  src/utils/indicators.ts  # 技术指标计算
+```
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+## 性能优化
+
+- 行情缓存后台预热，用户无冷加载等待
+- async端点同步IO改为线程池执行，不阻塞事件循环
+- 股票代码O(1)索引 + 价格映射缓存
+- K线/指数数据60秒缓存
+- 数据库共享连接，去掉每次请求建表
+- 前端筛选400ms防抖 + GET请求30秒内存缓存
+
+## 部署
+
+详见 [DEPLOY.md](DEPLOY.md)
+
+**最低成本：165元/年**（腾讯云/阿里云轻量2核4G + Vercel免费托管前端）
+
+## 界面预览
+
+A股配色：红涨绿跌
+
+- 行情筛选页 — 多维度过滤 + 排序
+- 股票详情页 — K线图 + 技术指标 + 交易面板
+- 收益分析页 — 资金曲线 + 大盘对比
+
+## License
+
+MIT

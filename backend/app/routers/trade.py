@@ -10,10 +10,53 @@ from app.services.trading import (
 
 router = APIRouter()
 
+# 2026年法定节假日（国务院办公厅公告）
+_HOLIDAYS_2026 = {
+    # 元旦
+    "2026-01-01", "2026-01-02", "2026-01-03",
+    # 春节
+    "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19",
+    "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
+    # 清明节
+    "2026-04-04", "2026-04-05", "2026-04-06",
+    # 劳动节
+    "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+    # 端午节
+    "2026-06-19", "2026-06-20", "2026-06-21",
+    # 中秋节
+    "2026-09-25", "2026-09-26", "2026-09-27",
+    # 国庆节
+    "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05",
+    "2026-10-06", "2026-10-07",
+}
+# 调休上班日（周末但需上班）
+_WORKDAYS_2026 = {
+    "2026-01-04",   # 元旦调休
+    "2026-02-14", "2026-02-28",  # 春节调休
+    "2026-05-09",   # 劳动节调休
+    "2026-09-20",   # 国庆调休
+    "2026-10-10",   # 国庆调休
+}
+
+
+def _is_workday(date_str: str | None = None) -> bool:
+    """判断是否为交易日（工作日且非节假日，或调休上班日）。"""
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    if date_str in _HOLIDAYS_2026:
+        return False
+    if date_str in _WORKDAYS_2026:
+        return True
+    return datetime.now().weekday() < 5 if date_str == datetime.now().strftime("%Y-%m-%d") \
+        else datetime.strptime(date_str, "%Y-%m-%d").weekday() < 5
+
 
 def _check_trading_time():
     now = datetime.now()
-    if now.weekday() >= 5:
+    date_str = now.strftime("%Y-%m-%d")
+    if not _is_workday(date_str):
+        if date_str in _HOLIDAYS_2026:
+            return False, "休市（节假日）"
         return False, "休市（周末）"
     t = now.hour * 60 + now.minute
     if t < 9 * 60 + 30:
@@ -131,6 +174,19 @@ async def transactions(
     action: str | None = Query(None, description="buy or sell"),
 ):
     return await get_transactions(limit, start_date, end_date, action)
+
+
+@router.get("/market-status")
+async def market_status():
+    ok, msg = _check_trading_time()
+    return {
+        "is_trading_time": ok,
+        "status": msg,
+        "sessions": [
+            {"name": "上午盘", "start": "09:30", "end": "11:30"},
+            {"name": "下午盘", "start": "13:00", "end": "15:00"},
+        ],
+    }
 
 
 @router.post("/reset")

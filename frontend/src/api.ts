@@ -108,6 +108,12 @@ export interface WatchlistItem {
   change_amt: number;
 }
 
+export interface MarketStatus {
+  is_trading_time: boolean;
+  status: string;
+  sessions: { name: string; start: string; end: string }[];
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -155,4 +161,5 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     }),
+  getMarketStatus: () => request<MarketStatus>("/trade/market-status"),
 };

@@ -1,22 +1,39 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem } from "./api";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import "./App.css";
 
 type Tab = "market" | "watchlist" | "sectors" | "positions" | "transactions";
 
 function useTradingTime() {
-  const [info, setInfo] = useState(() => checkTradingTime());
+  const [info, setInfo] = useState<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
+    isTradingTime: false,
+    tradingStatus: "加载中",
+    sessions: [],
+  });
   useEffect(() => {
-    const id = setInterval(() => setInfo(checkTradingTime()), 30000);
+    const fetch = () => {
+      api.getMarketStatus().then((d) => {
+        setInfo({ isTradingTime: d.is_trading_time, tradingStatus: d.status, sessions: d.sessions });
+      }).catch(() => {
+        // 降级到前端计算
+        const fallback = checkTradingTimeLocal();
+        setInfo({ isTradingTime: fallback.isTradingTime, tradingStatus: fallback.tradingStatus, sessions: [
+          { name: "上午盘", start: "09:30", end: "11:30" },
+          { name: "下午盘", start: "13:00", end: "15:00" },
+        ]});
+      });
+    };
+    fetch();
+    const id = setInterval(fetch, 30000);
     return () => clearInterval(id);
   }, []);
   return info;
 }
 
-function checkTradingTime() {
+function checkTradingTimeLocal() {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun, 6=Sat
+  const day = now.getDay();
   const h = now.getHours(), m = now.getMinutes(), t = h * 60 + m;
   if (day === 0 || day === 6) return { isTradingTime: false, tradingStatus: "休市（周末）" };
   if (t < 9 * 60 + 30) return { isTradingTime: false, tradingStatus: "尚未开盘" };
@@ -66,10 +83,18 @@ export default function App() {
     );
   }
 
+  const { isTradingTime, tradingStatus, sessions } = useTradingTime();
+
   return (
     <div className="app">
       <header className="header">
         <h1>A股低价股模拟炒股</h1>
+        <div className="market-status-bar">
+          <span className={`market-status ${isTradingTime ? "open" : "closed"}`}>{tradingStatus}</span>
+          {sessions.length > 0 && (
+            <span className="market-sessions">交易时间：{sessions.map((s) => `${s.start}-${s.end}`).join(" / ")}</span>
+          )}
+        </div>
         {account && <AccountBar account={account} />}
       </header>
       <nav className="tabs">

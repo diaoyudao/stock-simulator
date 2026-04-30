@@ -1,22 +1,22 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import "./App.css";
 
 type Tab = "market" | "watchlist" | "sectors" | "positions" | "transactions";
 
-function useTradingTime() {
-  const [info, setInfo] = useState<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
-    isTradingTime: false,
-    tradingStatus: "加载中",
-    sessions: [],
-  });
+// 全局共享交易时间，避免每个组件创建独立 interval
+const TradingTimeContext = createContext<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
+  isTradingTime: false, tradingStatus: "加载中", sessions: [],
+});
+
+function TradingTimeProvider({ children }: { children: React.ReactNode }) {
+  const [info, setInfo] = useState({ isTradingTime: false, tradingStatus: "加载中", sessions: [] as MarketStatus["sessions"] });
   useEffect(() => {
     const fetch = () => {
       api.getMarketStatus().then((d) => {
         setInfo({ isTradingTime: d.is_trading_time, tradingStatus: d.status, sessions: d.sessions });
       }).catch(() => {
-        // 降级到前端计算
         const fallback = checkTradingTimeLocal();
         setInfo({ isTradingTime: fallback.isTradingTime, tradingStatus: fallback.tradingStatus, sessions: [
           { name: "上午盘", start: "09:30", end: "11:30" },
@@ -28,7 +28,11 @@ function useTradingTime() {
     const id = setInterval(fetch, 30000);
     return () => clearInterval(id);
   }, []);
-  return info;
+  return <TradingTimeContext.Provider value={info}>{children}</TradingTimeContext.Provider>;
+}
+
+function useTradingTime() {
+  return useContext(TradingTimeContext);
 }
 
 function checkTradingTimeLocal() {
@@ -44,6 +48,14 @@ function checkTradingTimeLocal() {
 }
 
 export default function App() {
+  return (
+    <TradingTimeProvider>
+      <AppInner />
+    </TradingTimeProvider>
+  );
+}
+
+function AppInner() {
   const [tab, setTab] = useState<Tab>("market");
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -52,13 +64,12 @@ export default function App() {
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [acc, pos, txs] = await Promise.all([
-      api.getAccount(),
-      api.getPositions(),
+    const [dash, txs] = await Promise.all([
+      api.getDashboard(),
       api.getTransactions({ limit: 200, ...txFilter }),
     ]);
-    setAccount(acc);
-    setPositions(pos);
+    setAccount(dash.account);
+    setPositions(dash.positions);
     setTransactions(txs);
   }, [txFilter]);
 

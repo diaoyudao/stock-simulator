@@ -114,6 +114,12 @@ export interface MarketStatus {
   sessions: { name: string; start: string; end: string }[];
 }
 
+export interface Dashboard {
+  account: AccountInfo;
+  positions: Position[];
+  market_status: MarketStatus;
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -162,4 +168,5 @@ export const api = {
       body: JSON.stringify({ code }),
     }),
   getMarketStatus: () => request<MarketStatus>("/trade/market-status"),
+  getDashboard: () => request<Dashboard>("/trade/dashboard"),
 };

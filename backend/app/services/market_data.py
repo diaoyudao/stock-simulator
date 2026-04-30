@@ -9,6 +9,7 @@ _TENCENT_URL = "https://qt.gtimg.cn/q="
 _cache_timeout = 60
 _last_fetch_time = 0.0
 _cached_stocks: list[dict] = []
+_fetching = False  # 防缓存击穿标记
 
 # 行业板块缓存（5分钟）
 _sector_cache: dict[str, str] = {}  # code -> sector_name
@@ -16,13 +17,22 @@ _sector_cache_time = 0.0
 _sector_list_cache: list[dict] = []  # [{name, code}]
 _sector_list_cache_time = 0.0
 
+# 板块概览缓存（5分钟）
+_sector_overview_cache: list[dict] = []
+_sector_overview_cache_time = 0.0
+
+# 连接池
+_session = requests.Session()
+_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8))
+_session.mount("http://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8))
+
 _executor = ThreadPoolExecutor(max_workers=8)
 
 
 def _fetch_page(page: int, page_size: int = 80) -> list[dict]:
     """获取单页行情数据。"""
     try:
-        r = requests.get(_BASE_URL, params={
+        r = _session.get(_BASE_URL, params={
             "page": page, "num": page_size,
             "sort": "changepercent", "asc": 0,
             "node": "hs_a", "symbol": "", "_s_r_a": "page",
@@ -93,7 +103,7 @@ def _fetch_tencent_batch(codes: list[str]) -> dict[str, dict]:
     def _fetch_tencent_chunk(chunk_symbols: list[str]) -> dict[str, dict]:
         chunk_result: dict[str, dict] = {}
         try:
-            r = requests.get(_TENCENT_URL + ",".join(chunk_symbols), timeout=10)
+            r = _session.get(_TENCENT_URL + ",".join(chunk_symbols), timeout=10)
             for line in r.text.split(";"):
                 line = line.strip()
                 if not line or "~" not in line:
@@ -128,7 +138,7 @@ def _fetch_sector_list() -> list[dict]:
     if _sector_list_cache and now - _sector_list_cache_time < 300:
         return _sector_list_cache
     try:
-        r = requests.get(
+        r = _session.get(
             "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodes",
             timeout=10,
         )
@@ -159,7 +169,7 @@ def _extract_sectors(node) -> list[dict]:
 def _fetch_sector_page(sector_code: str, sector_name: str) -> list[tuple[str, str]]:
     """获取单个行业的股票列表，返回 [(code, sector_name)]。"""
     try:
-        r = requests.get(_BASE_URL, params={
+        r = _session.get(_BASE_URL, params={
             "page": 1, "num": 200,
             "sort": "changepercent", "asc": 0,
             "node": sector_code, "symbol": "", "_s_r_a": "page",
@@ -199,7 +209,12 @@ def get_sector_list() -> list[dict]:
 
 
 def get_sector_overview() -> list[dict]:
-    """返回各行业板块概览：平均涨跌幅、涨跌家数、成交额、新高新低、领涨股。"""
+    """返回各行业板块概览：平均涨跌幅、涨跌家数、成交额、新高新低、领涨股。带5分钟缓存。"""
+    global _sector_overview_cache, _sector_overview_cache_time
+    now = time.time()
+    if _sector_overview_cache and now - _sector_overview_cache_time < 300:
+        return _sector_overview_cache
+
     stocks = get_spot_data()
     mapping = _fetch_sector_mapping()
 
@@ -245,18 +260,27 @@ def get_sector_overview() -> list[dict]:
         })
 
     result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+    _sector_overview_cache = result
+    _sector_overview_cache_time = now
     return result
 
 
 def get_spot_data() -> list[dict]:
-    """获取全市场A股实时行情，带60秒缓存。"""
-    global _cached_stocks, _last_fetch_time
+    """获取全市场A股实时行情，带60秒缓存。防止缓存击穿。"""
+    global _cached_stocks, _last_fetch_time, _fetching
     now = time.time()
     if _cached_stocks and now - _last_fetch_time < _cache_timeout:
         return _cached_stocks
-    _cached_stocks = _fetch_all_stocks()
-    _last_fetch_time = now
-    return _cached_stocks
+    if _fetching:
+        # 另一个线程正在拉取，返回过期数据或空
+        return _cached_stocks
+    _fetching = True
+    try:
+        _cached_stocks = _fetch_all_stocks()
+        _last_fetch_time = time.time()
+        return _cached_stocks
+    finally:
+        _fetching = False
 
 
 def _enrich_with_tencent(stocks: list[dict], codes: list[str]) -> list[dict]:
@@ -429,24 +453,28 @@ def filter_low_price(
 
 
 def get_stock_detail(code: str) -> dict:
-    """获取单只股票详细行情。"""
+    """获取单只股票详细行情。并发拉取腾讯数据、连涨跌天数、行业映射。"""
     for s in get_spot_data():
         if s["代码"] == code:
-            extra = _fetch_tencent_batch([code])
-            ext = extra.get(code, {})
+            f_tencent = _executor.submit(_fetch_tencent_batch, [code])
+            f_consec = _executor.submit(compute_consecutive_days, code)
+            f_sector = _executor.submit(_fetch_sector_mapping)
+
+            ext = f_tencent.result().get(code, {})
             s["量比"] = ext.get("量比", 0)
             s["52周最高"] = ext.get("52周最高", 0)
             s["52周最低"] = ext.get("52周最低", 0)
-            consec = compute_consecutive_days(code)
+
+            consec = f_consec.result()
             s["连涨天数"] = consec["连涨天数"]
             s["连跌天数"] = consec["连跌天数"]
-            sector_mapping = _fetch_sector_mapping()
-            s["行业"] = sector_mapping.get(code, "")
+
+            s["行业"] = f_sector.result().get(code, "")
             return s
 
     prefix = "sh" if code.startswith("6") else "sz"
     try:
-        r = requests.get(f"https://qt.gtimg.cn/q={prefix}{code}", timeout=10)
+        r = _session.get(f"https://qt.gtimg.cn/q={prefix}{code}", timeout=10)
         text = r.text
         if '~' not in text:
             return {}
@@ -489,7 +517,7 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
     datalen = "250" if period == "monthly" else "120"
 
     try:
-        r = requests.get(url, params={
+        r = _session.get(url, params={
             "symbol": symbol, "scale": scale,
             "ma": "no", "datalen": datalen,
         }, timeout=15)

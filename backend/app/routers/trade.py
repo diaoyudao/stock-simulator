@@ -176,6 +176,53 @@ async def transactions(
     return await get_transactions(limit, start_date, end_date, action)
 
 
+@router.get("/dashboard")
+async def dashboard():
+    """合并账户+持仓+市场状态，减少前端请求次数和 price_map 重复计算。"""
+    acc_raw = await get_account()
+    positions_raw = await get_positions()
+    try:
+        price_map = _build_price_map()
+    except Exception:
+        price_map = {}
+
+    # 计算持仓市值（复用 price_map）
+    for pos in positions_raw:
+        current_price = price_map.get(pos["code"], pos["avg_cost"])
+        pos["current_price"] = current_price
+        pos["market_value"] = round(current_price * pos["quantity"], 2)
+        pos["profit"] = round((current_price - pos["avg_cost"]) * pos["quantity"], 2)
+        pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2)
+
+    market_value = sum(
+        price_map.get(p["code"], p["avg_cost"]) * p["quantity"]
+        for p in positions_raw
+    )
+    total = acc_raw["cash"] + market_value
+    profit = total - acc_raw["initial_cash"]
+    profit_pct = (profit / acc_raw["initial_cash"]) * 100
+
+    ok, msg = _check_trading_time()
+    return {
+        "account": {
+            "cash": round(acc_raw["cash"], 2),
+            "market_value": round(market_value, 2),
+            "total_assets": round(total, 2),
+            "total_profit": round(profit, 2),
+            "profit_pct": round(profit_pct, 2),
+        },
+        "positions": positions_raw,
+        "market_status": {
+            "is_trading_time": ok,
+            "status": msg,
+            "sessions": [
+                {"name": "上午盘", "start": "09:30", "end": "11:30"},
+                {"name": "下午盘", "start": "13:00", "end": "15:00"},
+            ],
+        },
+    }
+
+
 @router.get("/market-status")
 async def market_status():
     ok, msg = _check_trading_time()

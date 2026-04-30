@@ -4,7 +4,7 @@ import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChar
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
 import "./App.css";
 
-type Tab = "market" | "watchlist" | "sectors" | "positions" | "orders" | "transactions";
+type Tab = "market" | "watchlist" | "sectors" | "positions" | "orders" | "analysis" | "transactions";
 
 // 全局共享交易时间，避免每个组件创建独立 interval
 const TradingTimeContext = createContext<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
@@ -110,9 +110,9 @@ function AppInner() {
         {account && <AccountBar account={account} />}
       </header>
       <nav className="tabs">
-        {(["market", "watchlist", "sectors", "positions", "orders", "transactions"] as Tab[]).map((t) => (
+        {(["market", "watchlist", "sectors", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : t === "orders" ? "委托单" : "交易记录"}
+            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : t === "orders" ? "委托单" : t === "analysis" ? "收益分析" : "交易记录"}
           </button>
         ))}
         <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置账户</button>
@@ -123,6 +123,7 @@ function AppInner() {
         {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "orders" && <OrdersTab onTrade={refresh} />}
+        {tab === "analysis" && <AnalysisTab />}
         {tab === "transactions" && <TransactionsTab transactions={transactions} onFilter={handleTxFilter} />}
       </main>
     </div>
@@ -552,6 +553,134 @@ function OrdersTab({ onTrade }: { onTrade: () => void }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+function AnalysisTab() {
+  const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
+  const [stats, setStats] = useState<PerformanceStats | null>(null);
+  const [range, setRange] = useState(90);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const chartApiRef = useRef<IChartApi | null>(null);
+
+  const loadData = useCallback(async () => {
+    const [sn, st] = await Promise.all([api.getDailySnapshots(range), api.getPerformance()]);
+    setSnapshots(sn.reverse()); // oldest first for chart
+    setStats(st);
+  }, [range]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // Render equity curve chart
+  useEffect(() => {
+    const container = chartRef.current;
+    if (!container || !snapshots.length) return;
+    if (chartApiRef.current) {
+      chartApiRef.current.remove();
+      chartApiRef.current = null;
+    }
+
+    const raf = requestAnimationFrame(() => {
+      if (!container) return;
+      const chart = createChart(container, {
+        width: container.clientWidth || 800,
+        height: 280,
+        layout: { background: { type: ColorType.Solid, color: "#161b22" }, textColor: "#c9d1d9" },
+        grid: { vertLines: { color: "#21262d" }, horzLines: { color: "#21262d" } },
+        timeScale: { borderColor: "#30363d" },
+      });
+      chartApiRef.current = chart;
+
+      const totalLine = chart.addSeries(LineSeries, {
+        color: "#58a6ff",
+        lineWidth: 2,
+        title: "总资产",
+      });
+      totalLine.setData(snapshots.map((s) => ({ time: s.date, value: s.total })));
+
+      // 基准线（初始资金10万）
+      const baseline = chart.addSeries(LineSeries, {
+        color: "#484f58",
+        lineWidth: 1,
+        lineStyle: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "初始资金",
+      });
+      baseline.setData(snapshots.map((s) => ({ time: s.date, value: 100000 })));
+
+      chart.timeScale().fitContent();
+    });
+
+    const handleResize = () => {
+      if (chartRef.current && chartApiRef.current) {
+        chartApiRef.current.applyOptions({ width: chartRef.current.clientWidth });
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", handleResize);
+      if (chartApiRef.current) { chartApiRef.current.remove(); chartApiRef.current = null; }
+    };
+  }, [snapshots]);
+
+  if (!stats) return <div className="loading">加载中...</div>;
+
+  return (
+    <div>
+      <div className="filters">
+        <label>时间范围<select value={range} onChange={(e) => setRange(Number(e.target.value))}>
+          <option value={7}>1周</option>
+          <option value={30}>1月</option>
+          <option value={90}>3月</option>
+          <option value={365}>全部</option>
+        </select></label>
+        <button onClick={async () => { await api.recordSnapshot(); loadData(); }}>记录快照</button>
+      </div>
+
+      {snapshots.length === 0 ? (
+        <div className="empty">暂无资产数据，点击"记录快照"开始</div>
+      ) : (
+        <>
+          <div className="analysis-chart-section">
+            <h3>资金曲线</h3>
+            <div ref={chartRef} className="chart-container" />
+          </div>
+
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-label">总收益率</div>
+              <div className={`stat-value ${stats.total_return >= 0 ? "profit" : "loss"}`}>
+                {stats.total_return >= 0 ? "+" : ""}{stats.total_return}%
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">年化收益率</div>
+              <div className={`stat-value ${stats.annualized_return >= 0 ? "profit" : "loss"}`}>
+                {stats.annualized_return >= 0 ? "+" : ""}{stats.annualized_return}%
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">最大回撤</div>
+              <div className="stat-value loss">-{stats.max_drawdown}%</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">交易胜率</div>
+              <div className="stat-value">{stats.win_rate}%</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">盈亏比</div>
+              <div className="stat-value">{stats.profit_loss_ratio.toFixed(2)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">平均持仓天数</div>
+              <div className="stat-value">{stats.avg_holding_days}</div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

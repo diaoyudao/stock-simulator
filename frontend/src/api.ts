@@ -127,6 +127,23 @@ export interface PendingOrder {
   filled_price: number | null;
 }
 
+export interface DailySnapshot {
+  date: string;
+  cash: number;
+  positions_value: number;
+  total: number;
+}
+
+export interface PerformanceStats {
+  total_return: number;
+  annualized_return: number;
+  max_drawdown: number;
+  win_rate: number;
+  profit_loss_ratio: number;
+  avg_holding_days: number;
+  snapshot_count: number;
+}
+
 export interface Dashboard {
   account: AccountInfo;
   positions: Position[];
@@ -196,4 +213,10 @@ export const api = {
     request(`/trade/order/${id}/cancel`, { method: "POST" }),
   checkOrders: () =>
     request<{ filled_count: number; filled_orders: any[] }>("/trade/orders/check", { method: "POST" }),
+  getDailySnapshots: (days = 90) =>
+    request<DailySnapshot[]>(`/trade/daily-snapshots?days=${days}`),
+  getPerformance: () =>
+    request<PerformanceStats>("/trade/performance"),
+  recordSnapshot: () =>
+    request("/trade/snapshot", { method: "POST" }),
 };

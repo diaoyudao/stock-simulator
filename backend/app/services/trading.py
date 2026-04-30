@@ -55,6 +55,12 @@ async def _ensure_tables(db: aiosqlite.Connection):
             filled_at REAL,
             filled_price REAL
         );
+        CREATE TABLE IF NOT EXISTS daily_snapshots (
+            date TEXT PRIMARY KEY,
+            cash REAL NOT NULL,
+            positions_value REAL NOT NULL,
+            total REAL NOT NULL
+        );
     """)
 
 
@@ -402,5 +408,124 @@ async def _fill_order(order: aiosqlite.Row, fill_price: float) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+    finally:
+        await db.close()
+
+
+# ─── 每日资产快照 ───
+
+async def record_daily_snapshot(price_map: dict[str, float] | None = None) -> dict:
+    """记录当日资产快照。如已有则更新。"""
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT cash FROM account WHERE id = 1")
+        row = await cur.fetchone()
+        cash = row["cash"]
+
+        positions_raw = await db.execute("SELECT code, quantity, avg_cost FROM positions WHERE quantity > 0")
+        positions = await positions_raw.fetchall()
+
+        positions_value = 0.0
+        if price_map:
+            for p in positions:
+                positions_value += price_map.get(p["code"], p["avg_cost"]) * p["quantity"]
+        else:
+            for p in positions:
+                positions_value += p["avg_cost"] * p["quantity"]
+
+        total = cash + positions_value
+
+        await db.execute(
+            "INSERT OR REPLACE INTO daily_snapshots (date, cash, positions_value, total) VALUES (?, ?, ?, ?)",
+            (today, round(cash, 2), round(positions_value, 2), round(total, 2)),
+        )
+        await db.commit()
+        return {"success": True, "date": today, "cash": cash, "positions_value": positions_value, "total": total}
+    finally:
+        await db.close()
+
+
+async def get_daily_snapshots(days: int = 90) -> list[dict]:
+    db = await _get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM daily_snapshots ORDER BY date DESC LIMIT ?", (days,)
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_performance_stats() -> dict:
+    """计算收益统计指标。"""
+    db = await _get_db()
+    try:
+        cur = await db.execute("SELECT * FROM daily_snapshots ORDER BY date ASC")
+        snapshots = [dict(r) for r in await cur.fetchall()]
+
+        if not snapshots:
+            return {"total_return": 0, "annualized_return": 0, "max_drawdown": 0, "win_rate": 0, "profit_loss_ratio": 0, "avg_holding_days": 0}
+
+        # 总收益率
+        first = snapshots[0]["total"]
+        last = snapshots[-1]["total"]
+        total_return = (last - first) / first * 100 if first else 0
+
+        # 年化收益率
+        from datetime import datetime
+        d1 = datetime.strptime(snapshots[0]["date"], "%Y-%m-%d")
+        d2 = datetime.strptime(snapshots[-1]["date"], "%Y-%m-%d")
+        days_held = (d2 - d1).days
+        annualized_return = ((last / first) ** (365 / max(days_held, 1)) - 1) * 100 if first and days_held > 0 else 0
+
+        # 最大回撤
+        max_drawdown = 0
+        peak = snapshots[0]["total"]
+        for s in snapshots:
+            if s["total"] > peak:
+                peak = s["total"]
+            dd = (peak - s["total"]) / peak * 100 if peak else 0
+            if dd > max_drawdown:
+                max_drawdown = dd
+
+        # 交易胜率/盈亏比
+        cur2 = await db.execute("SELECT action, quantity, price, amount FROM transactions WHERE action = 'sell' ORDER BY created_at")
+        sells = await cur2.fetchall()
+
+        wins = 0
+        total_wins = 0
+        total_losses = 0
+        for s in sells:
+            # 简化：用金额正负判断
+            cur3 = await db.execute(
+                "SELECT avg_cost FROM positions WHERE code = (SELECT code FROM transactions WHERE id = ?)",
+                (s[0] if False else 0,),
+            )
+            profit = s["price"] - s.get("avg_cost", s["price"])
+            if profit > 0:
+                wins += 1
+                total_wins += profit * s["quantity"]
+            else:
+                total_losses += abs(profit * s["quantity"])
+
+        win_rate = wins / len(sells) * 100 if sells else 0
+        profit_loss_ratio = total_wins / total_losses if total_losses > 0 else 0
+
+        # 平均持仓周期（简化计算）
+        avg_holding_days = days_held / len(sells) if sells else 0
+
+        return {
+            "total_return": round(total_return, 2),
+            "annualized_return": round(annualized_return, 2),
+            "max_drawdown": round(max_drawdown, 2),
+            "win_rate": round(win_rate, 2),
+            "profit_loss_ratio": round(profit_loss_ratio, 2),
+            "avg_holding_days": round(avg_holding_days, 1),
+            "snapshot_count": len(snapshots),
+        }
     finally:
         await db.close()

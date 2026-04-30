@@ -7,6 +7,7 @@ from app.services.trading import (
     buy_stock, sell_stock, get_account, get_positions, get_transactions, reset_account,
     add_watchlist, remove_watchlist, get_watchlist,
     create_order, get_orders, cancel_order, check_and_fill_orders,
+    record_daily_snapshot, get_daily_snapshots, get_performance_stats,
 )
 
 router = APIRouter()
@@ -304,4 +305,26 @@ async def check_orders():
     """手动触发委托单检查（前端轮询调用）。"""
     price_map = _build_price_map()
     filled = await check_and_fill_orders(price_map)
+    # 同时记录当日快照
+    await record_daily_snapshot(price_map)
     return {"filled_count": len(filled), "filled_orders": filled}
+
+
+@router.get("/daily-snapshots")
+async def daily_snapshots(days: int = Query(90, ge=1, le=365)):
+    return await get_daily_snapshots(days)
+
+
+@router.get("/performance")
+async def performance():
+    return await get_performance_stats()
+
+
+@router.post("/snapshot")
+async def snapshot():
+    """手动记录当日资产快照。"""
+    try:
+        price_map = _build_price_map()
+    except Exception:
+        price_map = None
+    return await record_daily_snapshot(price_map)

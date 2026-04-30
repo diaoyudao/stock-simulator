@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
 import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
@@ -112,11 +112,12 @@ function AppInner() {
       </header>
       <nav className="tabs">
         {(["market", "watchlist", "sectors", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
-            {t === "market" ? "行情筛选" : t === "watchlist" ? "自选股" : t === "sectors" ? "行业板块" : t === "positions" ? "我的持仓" : t === "orders" ? "委托单" : t === "analysis" ? "收益分析" : "交易记录"}
+          <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
-        <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置账户</button>
+        <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} />}
@@ -254,7 +255,11 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
     }
   }, [buildParams]);
 
-  useEffect(() => { fetchStocks(); }, [fetchStocks]);
+  // 防抖：筛选条件变化后400ms才触发请求
+  useEffect(() => {
+    const t = setTimeout(fetchStocks, 400);
+    return () => clearTimeout(t);
+  }, [fetchStocks]);
 
   const totalPages = Math.ceil(total / 20);
 
@@ -304,7 +309,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
         <span className="result-info">共 {total} 只</span>
       </div>
       {loading ? <div className="loading">加载中...</div> : (
-        <table className="stock-table">
+        <div className="table-wrap"><table className="stock-table">
           <thead>
             <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交量</th><th>操作</th></tr>
           </thead>
@@ -324,7 +329,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       <div className="pagination">
         <button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</button>
@@ -377,7 +382,7 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
 function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Position[]; onTrade: () => void; onSelectStock: (code: string) => void }) {
   if (positions.length === 0) return <div className="empty">暂无持仓</div>;
   return (
-    <table className="stock-table">
+    <div className="table-wrap"><table className="stock-table">
       <thead>
         <tr><th>代码</th><th>名称</th><th>持仓</th><th>成本</th><th>现价</th><th>盈亏</th><th>盈亏%</th><th>操作</th></tr>
       </thead>
@@ -395,7 +400,7 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
@@ -463,7 +468,7 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
       </div>
 
       {items.length === 0 ? <div className="empty">暂无自选股，在行情页点击"自选"添加</div> : (
-        <table className="stock-table">
+        <div className="table-wrap"><table className="stock-table">
           <thead>
             <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th><th>操作</th></tr>
           </thead>
@@ -487,7 +492,7 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );
@@ -510,7 +515,7 @@ function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }
 
   if (loading) return <div className="loading">加载中...</div>;
   return (
-    <table className="stock-table">
+    <div className="table-wrap"><table className="stock-table">
       <thead>
         <tr><th>板块</th><th>均涨幅</th><th>涨/跌</th><th>成交额</th><th>新高</th><th>新低</th><th>领涨股</th></tr>
       </thead>
@@ -529,7 +534,7 @@ function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   );
 }
 
@@ -569,7 +574,7 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
         <button onClick={apply}>筛选</button>
         {(startDate || endDate || actionFilter) && <button onClick={() => { setStartDate(""); setEndDate(""); setActionFilter(""); onFilter("", "", ""); }}>清除</button>}
       </div>
-      <table className="stock-table">
+      <div className="table-wrap"><table className="stock-table">
         <thead>
           <tr><th>时间</th><th>操作</th><th>代码</th><th>名称</th><th>数量</th><th>价格</th><th>金额</th></tr>
         </thead>
@@ -586,7 +591,7 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 }
@@ -626,7 +631,7 @@ function OrdersTab({ onTrade }: { onTrade: () => void }) {
         <button onClick={load}>刷新</button>
       </div>
       {orders.length === 0 ? <div className="empty">暂无委托单</div> : (
-        <table className="stock-table">
+        <div className="table-wrap"><table className="stock-table">
           <thead>
             <tr><th>时间</th><th>操作</th><th>代码</th><th>名称</th><th>数量</th><th>委托价</th><th>状态</th><th>成交价</th><th>操作</th></tr>
           </thead>
@@ -645,7 +650,7 @@ function OrdersTab({ onTrade }: { onTrade: () => void }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );
@@ -834,11 +839,9 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   const pos = positions.find((p) => p.code === code);
 
   useEffect(() => {
-    api.getDetail(code).then(setDetail);
-  }, [code]);
-
-  useEffect(() => {
-    api.getHistory(code, klinePeriod).then(setKlineData);
+    // 并行请求详情和K线数据
+    Promise.all([api.getDetail(code), api.getHistory(code, klinePeriod)])
+      .then(([d, k]) => { setDetail(d); setKlineData(k); });
   }, [code, klinePeriod]);
 
   useEffect(() => {

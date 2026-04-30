@@ -832,13 +832,291 @@ body {
   border-color: var(--loss);
 }
 
+/* ============ Mobile Responsive ============ */
+
+/* 表格横向滚动容器 */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tab 图标/标签结构 */
+.tab-icon, .tab-label {
+  display: inline;
+}
+.tab-icon {
+  margin-right: 4px;
+}
+
 @media (max-width: 768px) {
-  .app { padding: 8px; }
-  .account-bar { gap: 12px; }
-  .filters { gap: 8px; }
-  .stock-table { font-size: 12px; }
-  .stock-table th, .stock-table td { padding: 6px; }
-  .detail-price { font-size: 28px; }
-  .detail-metrics { grid-template-columns: repeat(3, 1fr); }
-  .detail-trade-row { flex-wrap: wrap; gap: 8px; }
+  .app {
+    padding: 8px 8px 72px 8px; /* 底部留给固定tab栏 */
+  }
+
+  /* ── Header ── */
+  .header h1 {
+    font-size: 16px;
+  }
+  .market-status-bar {
+    font-size: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .market-sessions {
+    width: 100%;
+    font-size: 11px;
+  }
+
+  /* ── Tab 栏：固定底部 + 横向滚动 ── */
+  .tabs {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    padding: 6px 4px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    margin-bottom: 0;
+    gap: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 12px;
+    border: none;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 48px;
+  }
+  .tab-icon {
+    margin-right: 0;
+    font-size: 16px;
+  }
+  .tab-label {
+    font-size: 10px;
+  }
+  .tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .tab.reset {
+    margin-left: 0;
+    color: var(--loss);
+    border: 1px solid var(--loss);
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+  .tab.reset .tab-icon { display: none; }
+
+  /* ── AccountBar ── */
+  .account-bar {
+    gap: 8px;
+    font-size: 12px;
+  }
+  .account-bar .value {
+    font-size: 13px;
+  }
+
+  /* ── Notification ── */
+  .notification-bell {
+    font-size: 16px;
+    padding: 4px;
+  }
+  .notification-panel {
+    width: calc(100vw - 16px);
+    right: -8px;
+    max-height: 50vh;
+  }
+
+  /* ── Filters ── */
+  .filters {
+    gap: 6px;
+    padding: 8px;
+    flex-wrap: wrap;
+  }
+  .filters label {
+    font-size: 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .filters input, .filters select {
+    width: 60px;
+    min-width: 50px;
+    font-size: 14px; /* 防止iOS缩放 */
+    padding: 6px 4px;
+  }
+  .filters input[type="text"] {
+    width: 70px;
+  }
+  .filters input[type="date"] {
+    width: 120px;
+  }
+  .filters button {
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+
+  /* ── Tables ── */
+  .stock-table {
+    font-size: 12px;
+    min-width: 500px; /* 保证可横向滚动 */
+  }
+  .stock-table th, .stock-table td {
+    padding: 8px 6px;
+  }
+  .trade-btn, .cancel-btn, .watch-btn, .remove-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  /* ── Trade Panel (inline) ── */
+  .trade-panel {
+    min-width: 0;
+    width: 100%;
+  }
+  .trade-row input {
+    width: 60px;
+    padding: 6px 4px;
+  }
+
+  /* ── Pagination ── */
+  .pagination button {
+    padding: 8px 16px;
+  }
+
+  /* ── StockDetail ── */
+  .detail-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .detail-name {
+    font-size: 18px;
+  }
+  .detail-price {
+    font-size: 28px;
+  }
+  .detail-price-row span:not(.detail-price) {
+    font-size: 14px;
+  }
+  .detail-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .metric {
+    padding: 8px 10px;
+  }
+  .metric-value {
+    font-size: 13px;
+  }
+  .detail-position {
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .detail-trade {
+    padding: 12px;
+  }
+  .detail-trade-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .detail-buy, .detail-sell {
+    padding: 10px 24px;
+    flex: 1;
+    text-align: center;
+  }
+  .detail-trade-row input {
+    padding: 8px 10px;
+    width: 90px;
+  }
+  .detail-confirm {
+    width: 100%;
+    padding: 12px;
+    text-align: center;
+  }
+  .chart-toolbar {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 8px;
+  }
+  .period-tabs .tab {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .indicator-tabs .tab {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  /* ── Alert panel ── */
+  .alert-panel {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+  }
+  .alert-panel input {
+    width: 70px;
+    font-size: 14px;
+  }
+
+  /* ── AnalysisTab ── */
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .stat-value {
+    font-size: 16px;
+  }
+
+  /* ── Group bar ── */
+  .group-bar {
+    padding: 6px 8px;
+  }
+  .group-input {
+    width: 60px;
+    font-size: 14px;
+  }
+  .group-select {
+    font-size: 12px;
+    padding: 4px 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app {
+    padding: 6px 6px 72px 6px;
+  }
+  .header h1 {
+    font-size: 14px;
+  }
+  .account-bar {
+    gap: 6px;
+  }
+  .account-bar .value {
+    font-size: 12px;
+  }
+  .detail-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .detail-price {
+    font-size: 24px;
+  }
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .filters input, .filters select {
+    width: 50px;
+  }
+  .filters input[type="text"] {
+    width: 60px;
+  }
 }

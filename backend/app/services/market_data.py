@@ -1,4 +1,5 @@
 import time
+import threading
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
@@ -7,9 +8,13 @@ _BASE_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.ph
 _TENCENT_URL = "https://qt.gtimg.cn/q="
 
 _cache_timeout = 60
+_refresh_ahead = 10  # 提前10秒后台刷新
 _last_fetch_time = 0.0
 _cached_stocks: list[dict] = []
+_stock_index: dict[str, dict] = {}  # code -> stock dict，O(1)查找
+_price_map_cache: dict[str, float] = {}  # code -> 最新价
 _fetching = False  # 防缓存击穿标记
+_refreshing = False  # 后台刷新标记
 
 # 行业板块缓存（5分钟）
 _sector_cache: dict[str, str] = {}  # code -> sector_name
@@ -20,6 +25,14 @@ _sector_list_cache_time = 0.0
 # 板块概览缓存（5分钟）
 _sector_overview_cache: list[dict] = []
 _sector_overview_cache_time = 0.0
+
+# K线缓存（60秒）
+_kline_cache: dict[str, tuple[float, list[dict]]] = {}  # key -> (timestamp, data)
+_kline_cache_timeout = 60
+
+# 大盘指数缓存（60秒）
+_index_cache: tuple[float, list[dict]] = (0.0, [])
+_index_cache_timeout = 60
 
 # 连接池
 _session = requests.Session()
@@ -266,21 +279,59 @@ def get_sector_overview() -> list[dict]:
 
 
 def get_spot_data() -> list[dict]:
-    """获取全市场A股实时行情，带60秒缓存。防止缓存击穿。"""
-    global _cached_stocks, _last_fetch_time, _fetching
+    """获取全市场A股实时行情，带60秒缓存。过期前提前后台刷新，避免冷加载。"""
+    global _cached_stocks, _last_fetch_time, _fetching, _refreshing
+    global _stock_index, _price_map_cache
     now = time.time()
+    # 缓存有效，直接返回
+    if _cached_stocks and now - _last_fetch_time < _cache_timeout - _refresh_ahead:
+        return _cached_stocks
+    # 缓存即将过期但还没完全过期，触发后台刷新，仍然返回旧数据
     if _cached_stocks and now - _last_fetch_time < _cache_timeout:
+        if not _refreshing:
+            _refreshing = True
+            def _bg_refresh():
+                global _cached_stocks, _last_fetch_time, _fetching, _refreshing
+                global _stock_index, _price_map_cache
+                _fetching = True
+                try:
+                    data = _fetch_all_stocks()
+                    if data:
+                        _cached_stocks = data
+                        _stock_index = {s["代码"]: s for s in data}
+                        _price_map_cache = {s["代码"]: s["最新价"] for s in data}
+                        _last_fetch_time = time.time()
+                finally:
+                    _fetching = False
+                    _refreshing = False
+            threading.Thread(target=_bg_refresh, daemon=True).start()
         return _cached_stocks
+    # 缓存完全过期，需要同步刷新
     if _fetching:
-        # 另一个线程正在拉取，返回过期数据或空
-        return _cached_stocks
+        return _cached_stocks  # 正在刷新，返回旧数据
     _fetching = True
     try:
-        _cached_stocks = _fetch_all_stocks()
-        _last_fetch_time = time.time()
+        data = _fetch_all_stocks()
+        if data:
+            _cached_stocks = data
+            _stock_index = {s["代码"]: s for s in data}
+            _price_map_cache = {s["代码"]: s["最新价"] for s in data}
+            _last_fetch_time = time.time()
         return _cached_stocks
     finally:
         _fetching = False
+
+
+def get_stock_by_code(code: str) -> dict | None:
+    """O(1)按代码查找股票，避免遍历全量数据。"""
+    get_spot_data()  # 确保索引已构建
+    return _stock_index.get(code)
+
+
+def get_price_map() -> dict[str, float]:
+    """返回 code->最新价 映射，避免重复计算。"""
+    get_spot_data()  # 确保数据已加载
+    return _price_map_cache
 
 
 def _enrich_with_tencent(stocks: list[dict], codes: list[str]) -> list[dict]:
@@ -454,23 +505,24 @@ def filter_low_price(
 
 def get_stock_detail(code: str) -> dict:
     """获取单只股票详细行情。并发拉取腾讯数据、连涨跌天数、行业映射。"""
-    for s in get_spot_data():
-        if s["代码"] == code:
-            f_tencent = _executor.submit(_fetch_tencent_batch, [code])
-            f_consec = _executor.submit(compute_consecutive_days, code)
-            f_sector = _executor.submit(_fetch_sector_mapping)
+    s = get_stock_by_code(code)
+    if s:
+        s = dict(s)  # 浅拷贝避免污染缓存
+        f_tencent = _executor.submit(_fetch_tencent_batch, [code])
+        f_consec = _executor.submit(compute_consecutive_days, code)
+        f_sector = _executor.submit(_fetch_sector_mapping)
 
-            ext = f_tencent.result().get(code, {})
-            s["量比"] = ext.get("量比", 0)
-            s["52周最高"] = ext.get("52周最高", 0)
-            s["52周最低"] = ext.get("52周最低", 0)
+        ext = f_tencent.result().get(code, {})
+        s["量比"] = ext.get("量比", 0)
+        s["52周最高"] = ext.get("52周最高", 0)
+        s["52周最低"] = ext.get("52周最低", 0)
 
-            consec = f_consec.result()
-            s["连涨天数"] = consec["连涨天数"]
-            s["连跌天数"] = consec["连跌天数"]
+        consec = f_consec.result()
+        s["连涨天数"] = consec["连涨天数"]
+        s["连跌天数"] = consec["连跌天数"]
 
-            s["行业"] = f_sector.result().get(code, "")
-            return s
+        s["行业"] = f_sector.result().get(code, "")
+        return s
 
     prefix = "sh" if code.startswith("6") else "sz"
     try:
@@ -508,7 +560,14 @@ def get_stock_detail(code: str) -> dict:
 
 
 def get_stock_history(code: str, period: str = "daily", start_date: str = "20250101") -> list[dict]:
-    """获取单只股票历史K线（通过新浪API）。"""
+    """获取单只股票历史K线（通过新浪API），带60秒缓存。"""
+    cache_key = f"{code}:{period}"
+    now = time.time()
+    if cache_key in _kline_cache:
+        ts, data = _kline_cache[cache_key]
+        if now - ts < _kline_cache_timeout:
+            return data
+
     prefix = "sh" if code.startswith("6") else "sz"
     symbol = f"{prefix}{code}"
     url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
@@ -526,7 +585,8 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
         if not data:
             return []
         if period == "monthly":
-            return _aggregate_monthly(data)
+            data = _aggregate_monthly(data)
+        _kline_cache[cache_key] = (now, data)
         return data
     except Exception:
         return []
@@ -565,7 +625,13 @@ _INDEX_CODES = {
 
 
 def get_index_data() -> list[dict]:
-    """获取主要大盘指数当前数据。"""
+    """获取主要大盘指数当前数据，带60秒缓存。"""
+    global _index_cache
+    now = time.time()
+    ts, cached = _index_cache
+    if cached and now - ts < _index_cache_timeout:
+        return cached
+
     symbols = ",".join(_INDEX_CODES.keys())
     try:
         r = _session.get(f"https://hq.sinajs.cn/list={symbols}", headers={
@@ -594,6 +660,7 @@ def get_index_data() -> list[dict]:
                 "yesterday": yesterday,
                 "change_pct": round(change_pct, 2),
             })
+        _index_cache = (now, result)
         return result
     except Exception:
-        return []
+        return cached or []

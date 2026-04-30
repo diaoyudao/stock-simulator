@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -88,14 +89,18 @@ class SellRequest(BaseModel):
 
 
 def _get_price(code: str) -> float | None:
-    for s in get_spot_data():
-        if s["代码"] == code:
-            return s["最新价"]
-    return None
+    from app.services.market_data import get_stock_by_code
+    s = get_stock_by_code(code)
+    return s["最新价"] if s else None
 
 
 def _build_price_map() -> dict[str, float]:
-    return {s["代码"]: s["最新价"] for s in get_spot_data()}
+    from app.services.market_data import get_price_map
+    return get_price_map()
+
+
+async def _build_price_map_async() -> dict[str, float]:
+    return await asyncio.to_thread(_build_price_map)
 
 
 @router.get("/account")
@@ -103,7 +108,7 @@ async def account():
     acc = await get_account()
     positions = await get_positions()
     try:
-        price_map = _build_price_map()
+        price_map = await _build_price_map_async()
         market_value = sum(
             price_map.get(p["code"], p["avg_cost"]) * p["quantity"]
             for p in positions
@@ -128,7 +133,7 @@ async def account():
 async def positions():
     positions = await get_positions()
     try:
-        price_map = _build_price_map()
+        price_map = await _build_price_map_async()
         for pos in positions:
             current_price = price_map.get(pos["code"], pos["avg_cost"])
             pos["current_price"] = current_price
@@ -151,7 +156,7 @@ async def buy(req: BuyRequest):
         return {"error": f"非交易时间（{msg}）"}
     price = req.price
     if price is None:
-        price = _get_price(req.code)
+        price = await asyncio.to_thread(_get_price, req.code)
         if price is None:
             return {"error": "股票代码不存在"}
     return await buy_stock(req.code, req.name, req.quantity, price)
@@ -164,7 +169,7 @@ async def sell(req: SellRequest):
         return {"error": f"非交易时间（{msg}）"}
     price = req.price
     if price is None:
-        price = _get_price(req.code)
+        price = await asyncio.to_thread(_get_price, req.code)
         if price is None:
             return {"error": "股票代码不存在"}
     return await sell_stock(req.code, req.quantity, price)
@@ -186,7 +191,7 @@ async def dashboard():
     acc_raw = await get_account()
     positions_raw = await get_positions()
     try:
-        price_map = _build_price_map()
+        price_map = await _build_price_map_async()
     except Exception:
         price_map = {}
 
@@ -258,7 +263,7 @@ async def watchlist(group_id: int | None = Query(None)):
     items = await get_watchlist(group_id)
     if not items:
         return []
-    price_map = {s["代码"]: s for s in get_spot_data()}
+    price_map = {s["代码"]: s for s in await asyncio.to_thread(get_spot_data)}
     result = []
     for item in items:
         stock = price_map.get(item["code"])
@@ -370,7 +375,7 @@ async def cancel_limit_order(order_id: int):
 @router.post("/orders/check")
 async def check_orders():
     """手动触发委托单检查 + 提醒检查（前端轮询调用）。"""
-    price_map = _build_price_map()
+    price_map = await _build_price_map_async()
     filled = await check_and_fill_orders(price_map)
     triggered_alerts = await check_alerts(price_map)
     await record_daily_snapshot(price_map)
@@ -391,7 +396,7 @@ async def performance():
 async def snapshot():
     """手动记录当日资产快照。"""
     try:
-        price_map = _build_price_map()
+        price_map = await _build_price_map_async()
     except Exception:
         price_map = None
     return await record_daily_snapshot(price_map)

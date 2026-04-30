@@ -1,8 +1,38 @@
-const BASE = "/api";
+const BASE = import.meta.env.VITE_API_URL || "/api";
+
+// 简易 GET 请求缓存，避免重复请求同一只读接口
+const _cache = new Map<string, { ts: number; data: unknown }>();
+const CACHE_TTL = 30_000; // 30秒
+
+function _cacheKey(path: string, init?: RequestInit): string | null {
+  // 仅缓存 GET 请求
+  if (init?.method && init.method !== "GET") return null;
+  return path;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const key = _cacheKey(path, init);
+  if (key) {
+    const hit = _cache.get(key);
+    if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data as T;
+  }
   const res = await fetch(`${BASE}${path}`, init);
-  return res.json();
+  const data = await res.json();
+  if (key) {
+    _cache.set(key, { ts: Date.now(), data });
+  }
+  return data as T;
+}
+
+// 写操作后清除相关缓存
+function invalidateCache(prefix?: string) {
+  if (prefix) {
+    for (const k of _cache.keys()) {
+      if (k.includes(prefix)) _cache.delete(k);
+    }
+  } else {
+    _cache.clear();
+  }
 }
 
 export interface SpotResult {
@@ -178,88 +208,117 @@ export const api = {
     ).toString();
     return request<Transaction[]>(`/trade/transactions?${qs}`);
   },
-  buy: (code: string, name: string, quantity: number) =>
-    request("/trade/buy", {
+  buy: (code: string, name: string, quantity: number) => {
+    invalidateCache("/trade/");
+    return request("/trade/buy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, name, quantity }),
-    }),
-  sell: (code: string, quantity: number) =>
-    request("/trade/sell", {
+    });
+  },
+  sell: (code: string, quantity: number) => {
+    invalidateCache("/trade/");
+    return request("/trade/sell", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, quantity }),
-    }),
-  reset: () => request("/trade/reset", { method: "POST" }),
+    });
+  },
+  reset: () => {
+    invalidateCache();
+    return request("/trade/reset", { method: "POST" });
+  },
   getWatchlist: (group_id?: number) => {
     const qs = group_id ? `?group_id=${group_id}` : "";
     return request<WatchlistItem[]>(`/trade/watchlist${qs}`);
   },
-  addWatchlist: (code: string, name: string, group_id = 1) =>
-    request("/trade/watchlist/add", {
+  addWatchlist: (code: string, name: string, group_id = 1) => {
+    invalidateCache("/trade/watchlist");
+    return request("/trade/watchlist/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, name, group_id }),
-    }),
-  removeWatchlist: (code: string) =>
-    request("/trade/watchlist/remove", {
+    });
+  },
+  removeWatchlist: (code: string) => {
+    invalidateCache("/trade/watchlist");
+    return request("/trade/watchlist/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
-    }),
-  moveWatchlist: (code: string, group_id: number) =>
-    request("/trade/watchlist/move", {
+    });
+  },
+  moveWatchlist: (code: string, group_id: number) => {
+    invalidateCache("/trade/watchlist");
+    return request("/trade/watchlist/move", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, group_id }),
-    }),
+    });
+  },
   getGroups: () => request<WatchlistGroup[]>("/trade/groups"),
-  createGroup: (name: string) =>
-    request("/trade/groups/create", {
+  createGroup: (name: string) => {
+    invalidateCache("/trade/group");
+    return request("/trade/groups/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
-    }),
-  deleteGroup: (group_id: number) =>
-    request("/trade/groups/delete", {
+    });
+  },
+  deleteGroup: (group_id: number) => {
+    invalidateCache("/trade/group");
+    return request("/trade/groups/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ group_id }),
-    }),
+    });
+  },
   getMarketStatus: () => request<MarketStatus>("/trade/market-status"),
   getDashboard: () => request<Dashboard>("/trade/dashboard"),
-  createOrder: (code: string, name: string, action: "buy" | "sell", quantity: number, target_price: number) =>
-    request("/trade/order", {
+  createOrder: (code: string, name: string, action: "buy" | "sell", quantity: number, target_price: number) => {
+    invalidateCache("/trade/order");
+    return request("/trade/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, name, action, quantity, target_price }),
-    }),
+    });
+  },
   getOrders: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
     return request<PendingOrder[]>(`/trade/orders${qs}`);
   },
-  cancelOrder: (id: number) =>
-    request(`/trade/order/${id}/cancel`, { method: "POST" }),
-  checkOrders: () =>
-    request<{ filled_count: number; filled_orders: any[] }>("/trade/orders/check", { method: "POST" }),
+  cancelOrder: (id: number) => {
+    invalidateCache("/trade/order");
+    return request(`/trade/order/${id}/cancel`, { method: "POST" });
+  },
+  checkOrders: () => {
+    invalidateCache("/trade/order");
+    return request<{ filled_count: number; filled_orders: any[] }>("/trade/orders/check", { method: "POST" });
+  },
   getDailySnapshots: (days = 90) =>
     request<DailySnapshot[]>(`/trade/daily-snapshots?days=${days}`),
   getPerformance: () =>
     request<PerformanceStats>("/trade/performance"),
-  recordSnapshot: () =>
-    request("/trade/snapshot", { method: "POST" }),
+  recordSnapshot: () => {
+    invalidateCache("/trade/daily");
+    return request("/trade/snapshot", { method: "POST" });
+  },
   getIndices: () =>
     request<{ code: string; name: string; current: number; yesterday: number; change_pct: number }[]>("/market/indices"),
-  createAlert: (code: string, name: string, condition: string, value: number) =>
-    request("/trade/alert", {
+  createAlert: (code: string, name: string, condition: string, value: number) => {
+    invalidateCache("/trade/alert");
+    return request("/trade/alert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, name, condition, value }),
-    }),
+    });
+  },
   getAlerts: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
     return request<{ id: number; code: string; name: string; condition: string; value: number; status: string; created_at: number; triggered_at: number | null; message: string | null }[]>(`/trade/alerts${qs}`);
   },
-  cancelAlert: (id: number) =>
-    request(`/trade/alert/${id}/cancel`, { method: "POST" }),
+  cancelAlert: (id: number) => {
+    invalidateCache("/trade/alert");
+    return request(`/trade/alert/${id}/cancel`, { method: "POST" });
+  },
 };

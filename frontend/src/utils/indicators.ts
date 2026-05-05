@@ -62,12 +62,13 @@ function ema(values: number[], period: number): (number | null)[] {
 
 export function calcMA(candles: CandleData[], period: number): LinePoint[] {
   const result: LinePoint[] = [];
-  for (let i = period - 1; i < candles.length; i++) {
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) {
-      sum += candles[j].close;
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    if (i >= period - 1) {
+      result.push({ time: candles[i].time, value: sum / period });
     }
-    result.push({ time: candles[i].time, value: sum / period });
   }
   return result;
 }

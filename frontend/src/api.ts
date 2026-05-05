@@ -2,7 +2,9 @@ const BASE = import.meta.env.VITE_API_URL || "/api";
 
 // 简易 GET 请求缓存，避免重复请求同一只读接口
 const _cache = new Map<string, { ts: number; data: unknown }>();
+const _inflight = new Map<string, Promise<unknown>>();
 const CACHE_TTL = 30_000; // 30秒
+const MAX_CACHE_SIZE = 50;
 
 function _cacheKey(path: string, init?: RequestInit): string | null {
   // 仅缓存 GET 请求
@@ -15,20 +17,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (key) {
     const hit = _cache.get(key);
     if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data as T;
+    // 请求去重：复用已在飞的 promise
+    const inflight = _inflight.get(key);
+    if (inflight) return inflight as Promise<T>;
   }
-  const res = await fetch(`${BASE}${path}`, init);
-  const data = await res.json();
+  const fetchPromise = (async () => {
+    const res = await fetch(`${BASE}${path}`, init);
+    const data = await res.json();
+    if (key && res.ok) {
+      // 缓存上限：淘汰最旧条目
+      if (_cache.size >= MAX_CACHE_SIZE) {
+        const oldest = _cache.keys().next().value;
+        if (oldest) _cache.delete(oldest);
+      }
+      _cache.set(key, { ts: Date.now(), data });
+    }
+    return data as T;
+  })();
   if (key) {
-    _cache.set(key, { ts: Date.now(), data });
+    _inflight.set(key, fetchPromise);
+    fetchPromise.finally(() => _inflight.delete(key));
   }
-  return data as T;
+  return fetchPromise;
 }
 
 // 写操作后清除相关缓存
 function invalidateCache(prefix?: string) {
   if (prefix) {
     for (const k of _cache.keys()) {
-      if (k.includes(prefix)) _cache.delete(k);
+      if (k.startsWith(prefix)) _cache.delete(k);
     }
   } else {
     _cache.clear();

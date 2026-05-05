@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
 import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder } from "./api";
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type ISeriesApi, ColorType } from "lightweight-charts";
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData } from "./utils/indicators";
 import "./App.css";
 
@@ -11,6 +11,25 @@ function toast(msg: string) {
   _toastSet?.(msg);
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => _toastSet?.(""), 1500);
+}
+
+// 感知页面可见性的轮询 hook
+function usePolling(callback: () => void, intervalMs: number, deps: readonly unknown[] = []) {
+  const savedCb = useRef(callback);
+  savedCb.current = callback;
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") savedCb.current();
+    };
+    tick();
+    const id = setInterval(tick, intervalMs);
+    const onVisible = () => { tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, deps);
 }
 
 // 可搜索下拉组件
@@ -39,10 +58,10 @@ function SearchSelect({ value, onChange, options, placeholder }: {
   const selected = options.find((o) => o.value === value);
 
   return (
-    <div className="search-select" ref={ref}>
+    <div className={`search-select${open ? " open" : ""}${value ? " has-value" : ""}`} ref={ref}>
       <button className="search-select-trigger" onClick={() => { setOpen(!open); setSearch(""); }}>
-        {selected?.label || placeholder || "请选择"}
-        <span className="search-select-arrow">{open ? "▲" : "▼"}</span>
+        <span className={!value ? "placeholder" : ""}>{selected?.label || placeholder || "请选择"}</span>
+        <span className="search-select-arrow">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
         <div className="search-select-dropdown">
@@ -54,7 +73,7 @@ function SearchSelect({ value, onChange, options, placeholder }: {
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="search-select-list">
-            <button className={`search-select-option${!value ? " active" : ""}`} onClick={() => { onChange(""); setOpen(false); }}>
+            <button className="search-select-option" onClick={() => { onChange(""); setOpen(false); }}>
               {placeholder || "全部"}
             </button>
             {filtered.map((o) => (
@@ -86,22 +105,18 @@ const TradingTimeContext = createContext<{ isTradingTime: boolean; tradingStatus
 
 function TradingTimeProvider({ children }: { children: React.ReactNode }) {
   const [info, setInfo] = useState({ isTradingTime: false, tradingStatus: "加载中", sessions: [] as MarketStatus["sessions"] });
-  useEffect(() => {
-    const fetch = () => {
-      api.getMarketStatus().then((d) => {
-        setInfo({ isTradingTime: d.is_trading_time, tradingStatus: d.status, sessions: d.sessions });
-      }).catch(() => {
-        const fallback = checkTradingTimeLocal();
-        setInfo({ isTradingTime: fallback.isTradingTime, tradingStatus: fallback.tradingStatus, sessions: [
-          { name: "上午盘", start: "09:30", end: "11:30" },
-          { name: "下午盘", start: "13:00", end: "15:00" },
-        ]});
-      });
-    };
-    fetch();
-    const id = setInterval(fetch, 30000);
-    return () => clearInterval(id);
+  const fetchStatus = useCallback(() => {
+    api.getMarketStatus().then((d) => {
+      setInfo({ isTradingTime: d.is_trading_time, tradingStatus: d.status, sessions: d.sessions });
+    }).catch(() => {
+      const fallback = checkTradingTimeLocal();
+      setInfo({ isTradingTime: fallback.isTradingTime, tradingStatus: fallback.tradingStatus, sessions: [
+        { name: "上午盘", start: "09:30", end: "11:30" },
+        { name: "下午盘", start: "13:00", end: "15:00" },
+      ]});
+    });
   }, []);
+  usePolling(fetchStatus, 30000);
   return <TradingTimeContext.Provider value={info}>{children}</TradingTimeContext.Provider>;
 }
 
@@ -317,13 +332,7 @@ function NotificationBell() {
     setTriggeredAlerts(alerts.map((a: any) => ({ id: a.id, code: a.code, name: a.name, message: a.message || "" })));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
-
-  // Poll every 60s
-  useEffect(() => {
-    const timer = setInterval(load, 60000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePolling(load, 60000);
 
   const hasNew = triggeredAlerts.length > 0;
 
@@ -583,11 +592,7 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
   }, []);
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
-  useEffect(() => {
-    fetchList();
-    const timer = setInterval(fetchList, 30000);
-    return () => clearInterval(timer);
-  }, [fetchList]);
+  usePolling(fetchList, 30000, [fetchList]);
 
   const handleRemove = async (code: string) => {
     await api.removeWatchlist(code);
@@ -1063,6 +1068,64 @@ function AnalysisTab() {
   );
 }
 
+// 分时图组件 — useMemo 缓存 SVG，避免每次渲染重建
+function IntradayChart({ data, basePrice }: { data: IntradayItem[]; basePrice: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const svg = useMemo(() => {
+    if (!data.length) return "";
+    const byMinute = new Map<string, { price: number; vol: number }>();
+    for (const item of data) {
+      const key = item.time.substring(0, 5);
+      const prev = byMinute.get(key);
+      if (!prev) byMinute.set(key, { price: item.price, vol: item.volume });
+      else { prev.price = item.price; prev.vol += item.volume; }
+    }
+    const entries = [...byMinute.entries()];
+    if (!entries.length) return "";
+    const prices = entries.map(([, v]) => v.price);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const range = maxP - minP || 1;
+    const w = 400;
+    const h = 200;
+    const pad = { l: 50, r: 10, t: 10, b: 30 };
+    const cw = w - pad.l - pad.r;
+    const ch = h - pad.t - pad.b;
+    let svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">`;
+    svg += `<rect width="${w}" height="${h}" fill="#161b22"/>`;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + (ch / 4) * i;
+      const p = maxP - (range / 4) * i;
+      svg += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#30363d" stroke-width="0.5"/>`;
+      svg += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" fill="#8b949e" font-size="10">${p.toFixed(2)}</text>`;
+    }
+    const bp = basePrice || prices[0];
+    const baseY = pad.t + ch * (1 - (bp - minP) / range);
+    if (baseY > pad.t && baseY < pad.t + ch) {
+      svg += `<line x1="${pad.l}" y1="${baseY}" x2="${w - pad.r}" y2="${baseY}" stroke="#8b949e" stroke-dasharray="3,3" stroke-width="0.5"/>`;
+    }
+    const pts = entries.map(([_t, v], i) => {
+      const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
+      const y = pad.t + ch * (1 - (v.price - minP) / range);
+      return `${x},${y}`;
+    }).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="#58a6ff" stroke-width="1.5"/>`;
+    const step = Math.max(1, Math.floor(entries.length / 5));
+    for (let i = 0; i < entries.length; i += step) {
+      const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
+      svg += `<text x="${x}" y="${h - 5}" text-anchor="middle" fill="#8b949e" font-size="10">${entries[i][0]}</text>`;
+    }
+    svg += `</svg>`;
+    return svg;
+  }, [data, basePrice]);
+
+  useEffect(() => {
+    if (ref.current && svg) ref.current.innerHTML = svg;
+  }, [svg]);
+
+  return <div className="intraday-chart-wrap" ref={ref} />;
+}
+
 // ============ Stock Detail Page ============
 
 function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
@@ -1108,6 +1171,26 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
     Promise.all([api.getDetail(code), api.getHistory(code, klinePeriod)])
       .then(([d, k]) => { setDetail(d); setKlineData(k); });
   }, [code, klinePeriod]);
+
+  // 缓存K线数据转换为指标计算格式
+  const candleData = useMemo<CandleData[]>(
+    () => klineData.map((d) => ({
+      time: d.day, open: parseFloat(d.open), high: parseFloat(d.high),
+      low: parseFloat(d.low), close: parseFloat(d.close), volume: parseFloat(d.volume),
+    })),
+    [klineData]
+  );
+
+  // 缓存指标计算结果 — 只在 klineData 变化时重算
+  const indicatorData = useMemo(() => {
+    if (!candleData.length) return null;
+    return {
+      ma5: calcMA(candleData, 5), ma10: calcMA(candleData, 10),
+      ma20: calcMA(candleData, 20), ma60: calcMA(candleData, 60),
+      boll: calcBOLL(candleData),
+      macd: calcMACD(candleData), kdj: calcKDJ(candleData), rsi: calcRSI(candleData),
+    };
+  }, [candleData]);
 
   useEffect(() => {
     if (detailTab !== "financial" || !code) return;
@@ -1156,6 +1239,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
     api.getFundFlow(code).then((d) => setFundFlowData(Array.isArray(d) ? d : [])).catch(() => setFundFlowData([]));
   }, [code, detailTab]);
 
+  // 图表生命周期 — 仅 klineData 变化时重建
   useEffect(() => {
     const container = chartRef.current;
     if (!container || !klineData.length) return;
@@ -1164,14 +1248,11 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
       chartApiRef.current = null;
     }
 
-    const hasSubChart = indicators.subChart !== "none";
-    const totalHeight = hasSubChart ? 420 : 320;
-
     const raf = requestAnimationFrame(() => {
       if (!container) return;
       const chart = createChart(container, {
         width: container.clientWidth || 800,
-        height: totalHeight,
+        height: 320,
         layout: {
           background: { type: ColorType.Solid, color: "#161b22" },
           textColor: "#c9d1d9",
@@ -1202,22 +1283,6 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
         scaleMargins: { top: 0.8, bottom: 0 },
       });
 
-      const candleData: CandlestickData[] = klineData.map((d) => ({
-        time: d.day,
-        open: parseFloat(d.open),
-        high: parseFloat(d.high),
-        low: parseFloat(d.low),
-        close: parseFloat(d.close),
-      }));
-      const volumeData: HistogramData[] = klineData.map((d) => ({
-        time: d.day,
-        value: parseFloat(d.volume),
-        color: parseFloat(d.close) >= parseFloat(d.open) ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
-      }));
-      candleSeries.setData(candleData);
-      volumeSeries.setData(volumeData);
-
-      // Convert K-line data to CandleData for indicator calculation
       const cd: CandleData[] = klineData.map((d) => ({
         time: d.day,
         open: parseFloat(d.open),
@@ -1226,120 +1291,12 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
         close: parseFloat(d.close),
         volume: parseFloat(d.volume),
       }));
-
-      // MA 均线
-      if (indicators.ma) {
-        const maColors: Record<number, string> = { 5: "#f0b429", 10: "#2ecc71", 20: "#e74c3c", 60: "#9b59b6" };
-        for (const period of [5, 10, 20, 60] as const) {
-          const maData = calcMA(cd, period);
-          if (maData.length) {
-            const line = chart.addSeries(LineSeries, {
-              color: maColors[period],
-              lineWidth: 1,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              title: `MA${period}`,
-            });
-            line.setData(maData);
-          }
-        }
-      }
-
-      // BOLL 布林带
-      if (indicators.boll) {
-        const bollData = calcBOLL(cd);
-        if (bollData.length) {
-          const upper = chart.addSeries(LineSeries, {
-            color: "#e74c3c",
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            title: "BOLL上轨",
-          });
-          const mid = chart.addSeries(LineSeries, {
-            color: "#f0b429",
-            lineWidth: 1,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            title: "BOLL中轨",
-          });
-          const lower = chart.addSeries(LineSeries, {
-            color: "#2ecc71",
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            title: "BOLL下轨",
-          });
-          upper.setData(bollData.map((d) => ({ time: d.time, value: d.upper })));
-          mid.setData(bollData.map((d) => ({ time: d.time, value: d.mid })));
-          lower.setData(bollData.map((d) => ({ time: d.time, value: d.lower })));
-        }
-      }
-
-      // 副图指标
-      if (indicators.subChart === "macd") {
-        const macdData = calcMACD(cd);
-        if (macdData.length) {
-          const difLine = chart.addSeries(LineSeries, {
-            color: "#f0b429",
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            title: "DIF",
-          }, 1);
-          const deaLine = chart.addSeries(LineSeries, {
-            color: "#58a6ff",
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            title: "DEA",
-          }, 1);
-          const macdHist = chart.addSeries(HistogramSeries, {
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }, 1);
-          difLine.setData(macdData.map((d) => ({ time: d.time, value: d.dif })));
-          deaLine.setData(macdData.map((d) => ({ time: d.time, value: d.dea })));
-          macdHist.setData(macdData.map((d) => ({
-            time: d.time,
-            value: d.histogram,
-            color: d.histogram >= 0 ? "rgba(248,81,73,0.6)" : "rgba(63,185,80,0.6)",
-          })));
-        }
-      } else if (indicators.subChart === "kdj") {
-        const kdjData = calcKDJ(cd);
-        if (kdjData.length) {
-          const kLine = chart.addSeries(LineSeries, {
-            color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "K",
-          }, 1);
-          const dLine = chart.addSeries(LineSeries, {
-            color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "D",
-          }, 1);
-          const jLine = chart.addSeries(LineSeries, {
-            color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "J",
-          }, 1);
-          kLine.setData(kdjData.map((d) => ({ time: d.time, value: d.k })));
-          dLine.setData(kdjData.map((d) => ({ time: d.time, value: d.d })));
-          jLine.setData(kdjData.map((d) => ({ time: d.time, value: d.j })));
-        }
-      } else if (indicators.subChart === "rsi") {
-        const rsiData = calcRSI(cd);
-        if (rsiData.length) {
-          const rsi6 = chart.addSeries(LineSeries, {
-            color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI6",
-          }, 1);
-          const rsi12 = chart.addSeries(LineSeries, {
-            color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI12",
-          }, 1);
-          const rsi24 = chart.addSeries(LineSeries, {
-            color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI24",
-          }, 1);
-          rsi6.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi6 })));
-          rsi12.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi12 })));
-          rsi24.setData(rsiData.map((d) => ({ time: d.time, value: d.rsi24 })));
-        }
-      }
+      candleSeries.setData(cd.map((d) => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+      volumeSeries.setData(cd.map((d) => ({
+        time: d.time,
+        value: d.volume,
+        color: d.close >= d.open ? "rgba(248,81,73,0.3)" : "rgba(63,185,80,0.3)",
+      })));
 
       chart.timeScale().fitContent();
     });
@@ -1357,8 +1314,112 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
         chartApiRef.current.remove();
         chartApiRef.current = null;
       }
+      indicatorSeriesRef.current = [];
     };
-  }, [klineData, indicators]);
+  }, [klineData]);
+
+  // 跟踪指标系列引用，toggle 时只移除指标系列
+  const indicatorSeriesRef = useRef<ISeriesApi<"Line" | "Histogram">[]>([]);
+
+  // 指标系列 — 仅 indicators 变化时增删系列，不重建 chart
+  useEffect(() => {
+    const chart = chartApiRef.current;
+    if (!chart || !indicatorData) return;
+
+    // 移除旧指标系列
+    for (const series of indicatorSeriesRef.current) {
+      chart.removeSeries(series);
+    }
+    indicatorSeriesRef.current = [];
+
+    const hasSubChart = indicators.subChart !== "none";
+    chart.applyOptions({ height: hasSubChart ? 420 : 320 });
+    const tracked = indicatorSeriesRef.current;
+
+    // MA 均线
+    if (indicators.ma) {
+      const maColors: Record<number, string> = { 5: "#f0b429", 10: "#2ecc71", 20: "#e74c3c", 60: "#9b59b6" };
+      for (const period of [5, 10, 20, 60] as const) {
+        const maData = indicatorData[`ma${period}` as keyof typeof indicatorData] as import("./utils/indicators").LinePoint[];
+        if (maData?.length) {
+          const line = chart.addSeries(LineSeries, {
+            color: maColors[period],
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: `MA${period}`,
+          });
+          line.setData(maData);
+          tracked.push(line as any);
+        }
+      }
+    }
+
+    // BOLL 布林带
+    if (indicators.boll && indicatorData.boll.length) {
+      const upper = chart.addSeries(LineSeries, {
+        color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "BOLL上轨",
+      });
+      const mid = chart.addSeries(LineSeries, {
+        color: "#f0b429", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, title: "BOLL中轨",
+      });
+      const lower = chart.addSeries(LineSeries, {
+        color: "#2ecc71", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "BOLL下轨",
+      });
+      upper.setData(indicatorData.boll.map((d) => ({ time: d.time, value: d.upper })));
+      mid.setData(indicatorData.boll.map((d) => ({ time: d.time, value: d.mid })));
+      lower.setData(indicatorData.boll.map((d) => ({ time: d.time, value: d.lower })));
+      tracked.push(upper as any, mid as any, lower as any);
+    }
+
+    // 副图指标
+    if (indicators.subChart === "macd" && indicatorData.macd.length) {
+      const difLine = chart.addSeries(LineSeries, {
+        color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DIF",
+      }, 1);
+      const deaLine = chart.addSeries(LineSeries, {
+        color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "DEA",
+      }, 1);
+      const macdHist = chart.addSeries(HistogramSeries, {
+        priceLineVisible: false, lastValueVisible: false,
+      }, 1);
+      difLine.setData(indicatorData.macd.map((d) => ({ time: d.time, value: d.dif })));
+      deaLine.setData(indicatorData.macd.map((d) => ({ time: d.time, value: d.dea })));
+      macdHist.setData(indicatorData.macd.map((d) => ({
+        time: d.time, value: d.histogram,
+        color: d.histogram >= 0 ? "rgba(248,81,73,0.6)" : "rgba(63,185,80,0.6)",
+      })));
+      tracked.push(difLine as any, deaLine as any, macdHist as any);
+    } else if (indicators.subChart === "kdj" && indicatorData.kdj.length) {
+      const kLine = chart.addSeries(LineSeries, {
+        color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "K",
+      }, 1);
+      const dLine = chart.addSeries(LineSeries, {
+        color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "D",
+      }, 1);
+      const jLine = chart.addSeries(LineSeries, {
+        color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "J",
+      }, 1);
+      kLine.setData(indicatorData.kdj.map((d) => ({ time: d.time, value: d.k })));
+      dLine.setData(indicatorData.kdj.map((d) => ({ time: d.time, value: d.d })));
+      jLine.setData(indicatorData.kdj.map((d) => ({ time: d.time, value: d.j })));
+      tracked.push(kLine as any, dLine as any, jLine as any);
+    } else if (indicators.subChart === "rsi" && indicatorData.rsi.length) {
+      const rsi6 = chart.addSeries(LineSeries, {
+        color: "#f0b429", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI6",
+      }, 1);
+      const rsi12 = chart.addSeries(LineSeries, {
+        color: "#58a6ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI12",
+      }, 1);
+      const rsi24 = chart.addSeries(LineSeries, {
+        color: "#e74c3c", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: "RSI24",
+      }, 1);
+      rsi6.setData(indicatorData.rsi.map((d) => ({ time: d.time, value: d.rsi6 })));
+      rsi12.setData(indicatorData.rsi.map((d) => ({ time: d.time, value: d.rsi12 })));
+      rsi24.setData(indicatorData.rsi.map((d) => ({ time: d.time, value: d.rsi24 })));
+      tracked.push(rsi6 as any, rsi12 as any, rsi24 as any);
+    }
+  }, [indicators, indicatorData]);
 
   if (!detail) return <div className="loading">加载中...</div>;
 
@@ -1542,57 +1603,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
             {intradayData.length === 0 ? (
               <div className="data-error"><span className="error-icon">!</span><span>暂无分时数据</span></div>
             ) : (
-              <div className="intraday-chart-wrap" ref={(el) => {
-                if (!el || !intradayData.length) return;
-                // Aggregate by minute for price line
-                const byMinute = new Map<string, { price: number; vol: number }>();
-                for (const item of intradayData) {
-                  const key = item.time.substring(0, 5);
-                  const prev = byMinute.get(key);
-                  if (!prev) byMinute.set(key, { price: item.price, vol: item.volume });
-                  else { prev.price = item.price; prev.vol += item.volume; }
-                }
-                const entries = [...byMinute.entries()];
-                if (!entries.length) return;
-                const prices = entries.map(([, v]) => v.price);
-                const minP = Math.min(...prices);
-                const maxP = Math.max(...prices);
-                const range = maxP - minP || 1;
-                const w = el.clientWidth || 400;
-                const h = 200;
-                const pad = { l: 50, r: 10, t: 10, b: 30 };
-                const cw = w - pad.l - pad.r;
-                const ch = h - pad.t - pad.b;
-                const basePrice = detail?.["昨收"] || prices[0];
-                let svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`;
-                // Grid lines
-                for (let i = 0; i <= 4; i++) {
-                  const y = pad.t + (ch / 4) * i;
-                  const p = maxP - (range / 4) * i;
-                  svg += `<line x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}" stroke="#30363d" stroke-width="0.5"/>`;
-                  svg += `<text x="${pad.l-4}" y="${y+3}" text-anchor="end" fill="#8b949e" font-size="10">${p.toFixed(2)}</text>`;
-                }
-                // Base price line
-                const baseY = pad.t + ch * (1 - (basePrice - minP) / range);
-                if (baseY > pad.t && baseY < pad.t + ch) {
-                  svg += `<line x1="${pad.l}" y1="${baseY}" x2="${w-pad.r}" y2="${baseY}" stroke="#8b949e" stroke-dasharray="3,3" stroke-width="0.5"/>`;
-                }
-                // Price line
-                const pts = entries.map(([_t, v], i) => {
-                  const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
-                  const y = pad.t + ch * (1 - (v.price - minP) / range);
-                  return `${x},${y}`;
-                }).join(" ");
-                svg += `<polyline points="${pts}" fill="none" stroke="#58a6ff" stroke-width="1.5"/>`;
-                // Time labels
-                const step = Math.max(1, Math.floor(entries.length / 5));
-                for (let i = 0; i < entries.length; i += step) {
-                  const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
-                  svg += `<text x="${x}" y="${h-5}" text-anchor="middle" fill="#8b949e" font-size="10">${entries[i][0]}</text>`;
-                }
-                svg += `</svg>`;
-                el.innerHTML = svg;
-              }} />
+              <IntradayChart data={intradayData} basePrice={detail?.["昨收"] || 0} />
             )}
           </div>
         )}

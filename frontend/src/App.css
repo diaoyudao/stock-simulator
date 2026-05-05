@@ -1,14 +1,22 @@
 :root {
-  --bg: #0d1117;
-  --surface: #161b22;
-  --border: #30363d;
-  --text: #c9d1d9;
-  --text-h: #f0f6fc;
+  --bg: #17130d;
+  --surface: #1e1a13;
+  --border: #38322a;
+  --text: #d9cdb9;
+  --text-h: #fcf5e8;
+  --text-muted: #9b8e7a;
+  --text-m: #9b8e7a;
   --accent: #58a6ff;
   --profit: #f85149;
   --loss: #3fb950;
   --buy-bg: #1a3a2a;
   --sell-bg: #3a1a1a;
+  --on-accent: #fdf6e8;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,7 +40,7 @@ body {
   left: 50%;
   transform: translateX(-50%);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   padding: 8px 20px;
   border-radius: 6px;
   font-size: 13px;
@@ -133,7 +141,7 @@ body {
 
 .tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -204,7 +212,7 @@ body {
 .filters button {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   padding: 6px 16px;
   border-radius: 4px;
   cursor: pointer;
@@ -312,7 +320,7 @@ body {
 .trade-btn {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   padding: 3px 10px;
   border-radius: 3px;
   cursor: pointer;
@@ -349,7 +357,7 @@ body {
 
 .trade-row button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -372,7 +380,7 @@ body {
 .trade-actions .confirm {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   padding: 4px 12px;
   border-radius: 3px;
   cursor: pointer;
@@ -562,7 +570,7 @@ body {
 
 .indicator-tabs .tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -996,13 +1004,13 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
 
 .detail-buy.active {
   background: var(--profit);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--profit);
 }
 
 .detail-sell.active {
   background: var(--loss);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--loss);
 }
 
@@ -1019,7 +1027,7 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
 .detail-confirm {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   padding: 10px 32px;
   border-radius: 4px;
   cursor: pointer;
@@ -1054,7 +1062,7 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
   padding: 3px 10px;
   border-radius: 3px;
   background: var(--loss);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   font-size: 12px;
   cursor: pointer;
@@ -1166,7 +1174,7 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
   top: 0;
   right: 2px;
   background: var(--loss);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 10px;
   border-radius: 8px;
   padding: 1px 5px;
@@ -1253,7 +1261,7 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
 
 .watch-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .remove-btn {
@@ -1349,7 +1357,7 @@ tr:nth-child(3) .rank-num { color: #e6a046; }
   }
   .tab.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
   .tab.reset {
     margin-left: 0;

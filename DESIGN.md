@@ -8,26 +8,26 @@
 
 ## Color Strategy
 
-**Committed**: 一个暖调的深蓝灰底色占满整个界面，红绿双色承载核心信号（涨跌），一个冷蓝色作为交互锚点。
+**Committed**: 暖调灰底色占满界面，红绿双色承载核心信号（涨跌），一个暖蓝色作为交互锚点。
 
-不用"金融蓝"（那种 navy+gold 的券商套路）。底色偏暖灰，不是纯冷蓝，这让整体感觉不像终端而更像工具。红和绿不是装饰，它们是功能色，用户靠颜色而非数字判断方向。
+底色偏暖（琥珀色底调，hue 50-70），不是冷蓝也不是纯灰。这让整个界面有一种"台灯下翻报纸"的温度感，区别于典型金融终端的冰冷。红和绿不是装饰，是功能色，用户靠颜色而非数字判断方向。
 
 ### Palette
 
-| Token | OKLCH | Hex (legacy) | Role |
+| Token | OKLCH | Hex | Role |
 |---|---|---|---|
-| `--bg` | oklch(0.15 0.012 260) | #0d1117 | 页面底色，暖调深蓝灰 |
-| `--surface` | oklch(0.20 0.012 260) | #161b22 | 卡片、面板底色 |
-| `--border` | oklch(0.30 0.010 260) | #30363d | 分隔线、输入框边框 |
-| `--text` | oklch(0.78 0.010 260) | #c9d1d9 | 正文，次级文字 |
-| `--text-h` | oklch(0.95 0.008 260) | #f0f6fc | 标题、高亮数值 |
-| `--text-muted` | oklch(0.55 0.010 260) | #8b949e | 标签、辅助信息 |
+| `--bg` | oklch(0.15 0.012 60) | #17130d | 页面底色，暖调深灰 |
+| `--surface` | oklch(0.20 0.012 60) | #1e1a13 | 卡片、面板底色 |
+| `--border` | oklch(0.30 0.010 60) | #38322a | 分隔线、输入框边框 |
+| `--text` | oklch(0.78 0.012 60) | #d9cdb9 | 正文 |
+| `--text-h` | oklch(0.95 0.008 60) | #fcf5e8 | 标题、高亮数值 |
+| `--text-muted` | oklch(0.55 0.010 60) | #9b8e7a | 标签、辅助信息 |
 | `--accent` | oklch(0.68 0.14 240) | #58a6ff | 交互元素：链接、按钮、活跃标签 |
 | `--profit` | oklch(0.62 0.22 25) | #f85149 | 涨、买入（A股红涨） |
 | `--loss` | oklch(0.65 0.18 145) | #3fb950 | 跌、卖出（A股绿跌） |
 | `--buy-bg` | oklch(0.22 0.04 145) | #1a3a2a | 买入区域底色 |
 | `--sell-bg` | oklch(0.22 0.05 25) | #3a1a1a | 卖出区域底色 |
-| `--on-accent` | oklch(0.98 0.004 260) | #f0f6fc | 在 accent/profit/loss 色块上的文字 |
+| `--on-accent` | oklch(0.98 0.004 60) | #fdf6e8 | 在 accent/profit/loss 色块上的文字 |
 
 ### Rules
 
@@ -62,23 +62,17 @@ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 - 标签（今开、最高、成交量）用 11px + `--text-muted`，与数值拉开层次。
 - 不用斜体。中文斜体不可读。
 
-## Spacing and Rhythm
+## Spacing Scale
 
-基于 4px 网格。间距不均匀，关键区域间距更大。
+基于 4px 网格。用 CSS 变量，不硬编码数值。
 
-| Context | Gap |
-|---|---|
-| 页面区块之间 | 16px |
-| 卡片/面板内边距 | 12-16px |
-| 表格行间距 | 8px 垂直 + 10px 水平 |
-| 筛选栏元素间距 | 12px |
-| 按钮组间距 | 6-8px |
-| 详情页价格行间距 | 16px baseline gap |
-
-### Rules
-
-- 同一区域内用 6-8px 紧凑间距。不同区域之间用 16px 呼吸间距。
-- 详情页有 5 个视觉区域：价格行、指标网格、图表+子Tab、持仓、交易面板。区域间 16px，区域内 8-12px。
+| Token | Value | Use |
+|---|---|---|
+| `--space-xs` | 4px | 紧凑元素内间距、图标旁 |
+| `--space-sm` | 8px | 同区域内元素间距 |
+| `--space-md` | 12px | 筛选栏元素、按钮组 |
+| `--space-lg` | 16px | 区域间呼吸间距 |
+| `--space-xl` | 24px | 大区块分隔 |
 
 ## Elevation
 
@@ -95,13 +89,13 @@ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 
 ### Tab Navigation
 
-7个主 Tab，移动端固定底部，桌面端顶部水平排列。活跃态：`--accent` 背景 + `--on-accent` 文字。非活跃态：透明背景 + `--border` 边框 + `--text` 文字。
+8个主 Tab（行情/自选/板块/排行/持仓/委托/分析/记录），移动端固定底部，桌面端顶部水平排列。活跃态：`--accent` 背景 + `--on-accent` 文字。非活跃态：透明背景 + `--border` 边框 + `--text` 文字。
 
 移动端：图标在上、文字在下的纵向布局。桌面端：图标+文字横向排列。
 
 ### Data Table
 
-行情列表、持仓、交易记录、委托单都共用 `.stock-table` 样式。13px 字号，行间 1px `--border` 分隔，hover 时 `--surface` 底色高亮。
+行情列表、持仓、交易记录、委托单、龙虎榜共用 `.stock-table` 样式。13px 字号，行间 1px `--border` 分隔，hover 时 `--surface` 底色高亮。
 
 列表中的股票代码/名称是 `--accent` 色可点击链接。价格数字 600 weight。
 
@@ -113,11 +107,29 @@ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 
 ### Chart Toolbar
 
-两级 Tab：主 Tab（K线图/财务报表/资讯）在左，子 Tab（日K/周K/月K、MA/BOLL/MACD 等）在右。主 Tab 活跃态用底部边框指示，子 Tab 活跃态用 `--accent` 实色背景。
+两级 Tab：主 Tab（K线/分时/盘口/资金/财务/资讯）在左，子 Tab（日K/周K/月K、MA/BOLL/MACD 等）在右。主 Tab 活跃态用底部边框指示，子 Tab 活跃态用 `--accent` 实色背景。
 
 ### Trade Panel
 
 买入按钮：`--profit` 实色背景。卖出按钮：`--loss` 实色背景。非活跃态：`--border` 边框。确认按钮：`--accent` 实色。非交易时间：按钮半透明 + `not-allowed` 光标。
+
+### SearchSelect
+
+可搜索下拉。点击展开搜索框 + 选项列表。搜索即时过滤。选项列表最大高度 200px 可滚动。当前选中用 `--accent` 高亮。点击外部自动关闭。
+
+用于行业筛选（48项）和分组选择。
+
+### Toast
+
+底部居中弹出，`--accent` 背景 + `--on-accent` 文字。1.5秒自动消失。淡入动画 ease-out。所有操作反馈（加自选、买入成功、撤单等）用 Toast，不用 alert。
+
+### ComparePanel
+
+底部固定浮动面板，最高 50vh。顶部 2px `--accent` 边框。对比表格横向可滚动，指标列 sticky。每列可删除，支持最多5只股票。
+
+### RankingTab
+
+6个子 Tab（涨幅/跌幅/换手率/成交额/量比/龙虎榜）。排行前三名序号颜色递进：红、橙、金。龙虎榜"上榜原因"列单行省略。
 
 ### Financial Table
 
@@ -152,3 +164,4 @@ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 - 用 modal 替代 inline 操作
 - 硬编码 `#fff`（用 `--on-accent` 替代）
 - 未定义的 CSS 变量引用
+- alert() 弹窗（用 Toast 替代）

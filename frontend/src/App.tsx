@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus } from "./api";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
 import "./App.css";
@@ -835,6 +835,16 @@ function StockDetail({ code, positions, onBack, onTrade }: {
   const [showAlert, setShowAlert] = useState(false);
   const [alertCondition, setAlertCondition] = useState<"above" | "below">("above");
   const [alertValue, setAlertValue] = useState(0);
+  const [detailTab, setDetailTab] = useState<"kline" | "financial" | "news" | "intraday" | "bidask" | "fundflow">("kline");
+  const [finType, setFinType] = useState<"abstract" | "利润表" | "资产负债表" | "现金流量表">("abstract");
+  const [financialData, setFinancialData] = useState<FinancialAbstract[] | FinancialStatement[]>([]);
+  const [financialError, setFinancialError] = useState("");
+  const [financialLoading, setFinancialLoading] = useState(false);
+  const [newsData, setNewsData] = useState<StockNews[]>([]);
+  const [newsError, setNewsError] = useState("");
+  const [intradayData, setIntradayData] = useState<IntradayItem[]>([]);
+  const [bidAskData, setBidAskData] = useState<BidAskData | null>(null);
+  const [fundFlowData, setFundFlowData] = useState<FundFlowItem[]>([]);
 
   const pos = positions.find((p) => p.code === code);
 
@@ -843,6 +853,53 @@ function StockDetail({ code, positions, onBack, onTrade }: {
     Promise.all([api.getDetail(code), api.getHistory(code, klinePeriod)])
       .then(([d, k]) => { setDetail(d); setKlineData(k); });
   }, [code, klinePeriod]);
+
+  useEffect(() => {
+    if (detailTab !== "financial" || !code) return;
+    setFinancialError("");
+    setFinancialLoading(true);
+    const req = finType === "abstract" ? api.getFinancialAbstract(code) : api.getFinancialStatement(code, finType);
+    req.then((d) => {
+      if (Array.isArray(d) && d.length > 0) {
+        setFinancialData(d);
+        setFinancialError("");
+      } else if (Array.isArray(d) && d.length === 0) {
+        setFinancialData([]);
+        setFinancialError("该股票暂无财务数据");
+      } else {
+        setFinancialData([]);
+        const msg = (d as any).detail || (d as any).error || "数据加载失败";
+        setFinancialError(msg);
+      }
+    }).catch(() => {
+      setFinancialData([]);
+      setFinancialError("请求失败，请稍后重试");
+    }).finally(() => setFinancialLoading(false));
+  }, [code, detailTab, finType]);
+
+  useEffect(() => {
+    if (detailTab !== "news" || !code) return;
+    setNewsError("");
+    api.getStockNews(code).then((d) => {
+      if (Array.isArray(d)) { setNewsData(d); setNewsError(""); }
+      else { setNewsData([]); setNewsError((d as any).detail || "资讯加载失败"); }
+    }).catch(() => { setNewsData([]); setNewsError("请求失败"); });
+  }, [code, detailTab]);
+
+  useEffect(() => {
+    if (detailTab !== "intraday" || !code) return;
+    api.getIntraday(code).then((d) => setIntradayData(Array.isArray(d) ? d : [])).catch(() => setIntradayData([]));
+  }, [code, detailTab]);
+
+  useEffect(() => {
+    if (detailTab !== "bidask" || !code) return;
+    api.getBidAsk(code).then((d) => setBidAskData(d && typeof d === "object" && !Array.isArray(d) ? d : null)).catch(() => setBidAskData(null));
+  }, [code, detailTab]);
+
+  useEffect(() => {
+    if (detailTab !== "fundflow" || !code) return;
+    api.getFundFlow(code).then((d) => setFundFlowData(Array.isArray(d) ? d : [])).catch(() => setFundFlowData([]));
+  }, [code, detailTab]);
 
   useEffect(() => {
     const container = chartRef.current;
@@ -1129,28 +1186,240 @@ function StockDetail({ code, positions, onBack, onTrade }: {
         <div className="metric"><span className="metric-label">流通市值</span><span className="metric-value">{fmtCap(detail["流通市值"])}</span></div>
       </div>
 
-      {/* K-line chart */}
+      {/* Detail sub-tabs */}
       <div className="detail-chart-section">
         <div className="chart-toolbar">
-          <div className="period-tabs">
-            {(["daily", "weekly", "monthly"] as const).map((p) => (
-              <button key={p} className={klinePeriod === p ? "tab active" : "tab"} onClick={() => setKlinePeriod(p)}>
-                {p === "daily" ? "日K" : p === "weekly" ? "周K" : "月K"}
+          <div className="period-tabs detail-main-tabs">
+            {(["kline", "intraday", "bidask", "fundflow", "financial", "news"] as const).map((t) => (
+              <button key={t} className={detailTab === t ? "tab active" : "tab"} onClick={() => setDetailTab(t)}>
+                {t === "kline" ? "K线" : t === "intraday" ? "分时" : t === "bidask" ? "盘口" : t === "fundflow" ? "资金" : t === "financial" ? "财务" : "资讯"}
               </button>
             ))}
           </div>
-          <div className="indicator-tabs">
-            <button className={indicators.ma ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, ma: !p.ma }))}>MA</button>
-            <button className={indicators.boll ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, boll: !p.boll }))}>BOLL</button>
-            <button className={indicators.subChart === "macd" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "macd" ? "none" : "macd" }))}>MACD</button>
-            <button className={indicators.subChart === "kdj" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "kdj" ? "none" : "kdj" }))}>KDJ</button>
-            <button className={indicators.subChart === "rsi" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "rsi" ? "none" : "rsi" }))}>RSI</button>
-          </div>
+          {detailTab === "kline" && (
+            <div className="indicator-tabs">
+              {(["daily", "weekly", "monthly"] as const).map((p) => (
+                <button key={p} className={klinePeriod === p ? "tab active" : "tab"} onClick={() => setKlinePeriod(p)}>
+                  {p === "daily" ? "日K" : p === "weekly" ? "周K" : "月K"}
+                </button>
+              ))}
+              <button className={indicators.ma ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, ma: !p.ma }))}>MA</button>
+              <button className={indicators.boll ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, boll: !p.boll }))}>BOLL</button>
+              <button className={indicators.subChart === "macd" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "macd" ? "none" : "macd" }))}>MACD</button>
+              <button className={indicators.subChart === "kdj" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "kdj" ? "none" : "kdj" }))}>KDJ</button>
+              <button className={indicators.subChart === "rsi" ? "tab active" : "tab"} onClick={() => setIndicators((p) => ({ ...p, subChart: p.subChart === "rsi" ? "none" : "rsi" }))}>RSI</button>
+            </div>
+          )}
+          {detailTab === "financial" && (
+            <div className="indicator-tabs">
+              {(["abstract", "利润表", "资产负债表", "现金流量表"] as const).map((t) => (
+                <button key={t} className={finType === t ? "tab active" : "tab"} onClick={() => setFinType(t)}>
+                  {t === "abstract" ? "财务摘要" : t}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <div ref={chartRef} className="chart-container" />
-      </div>
 
-      {/* Position info */}
+        {detailTab === "kline" && <div ref={chartRef} className="chart-container" />}
+
+        {detailTab === "financial" && (
+          <div className="financial-content">
+            {financialError ? (
+              <div className="data-error">
+                <span className="error-icon">!</span>
+                <span>{financialError}</span>
+              </div>
+            ) : financialLoading ? (
+              <div className="loading">加载中...</div>
+            ) : financialData.length === 0 ? null : (
+              <div className="financial-table-wrap">
+                <table className="financial-table">
+                  <thead>
+                    <tr>
+                      <th>指标</th>
+                      {financialData.map((row, i) => (
+                        <th key={i}>{row["报告期"] || row["报告日"] || `第${i + 1}期`}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.keys(financialData[0])
+                      .filter((k) => k !== "报告期" && k !== "报告日")
+                      .map((key) => (
+                        <tr key={key}>
+                          <td className="fin-label">{key}</td>
+                          {financialData.map((row, i) => (
+                            <td key={i}>{row[key] ?? "-"}</td>
+                          ))}
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {detailTab === "news" && (
+          <div className="news-content">
+            {newsError ? (
+              <div className="data-error">
+                <span className="error-icon">!</span>
+                <span>{newsError}</span>
+              </div>
+            ) : newsData.length === 0 ? (
+              <div className="empty-hint">暂无资讯</div>
+            ) : (
+              newsData.map((n, i) => (
+                <a key={i} className="news-item" href={n.url} target="_blank" rel="noopener noreferrer">
+                  <span className="news-title">{n.title}</span>
+                  <span className="news-meta">{n.source} · {n.time}</span>
+                </a>
+              ))
+            )}
+          </div>
+        )}
+
+        {detailTab === "intraday" && (
+          <div className="intraday-content">
+            {intradayData.length === 0 ? (
+              <div className="data-error"><span className="error-icon">!</span><span>暂无分时数据</span></div>
+            ) : (
+              <div className="intraday-chart-wrap" ref={(el) => {
+                if (!el || !intradayData.length) return;
+                // Aggregate by minute for price line
+                const byMinute = new Map<string, { price: number; vol: number }>();
+                for (const item of intradayData) {
+                  const key = item.time.substring(0, 5);
+                  const prev = byMinute.get(key);
+                  if (!prev) byMinute.set(key, { price: item.price, vol: item.volume });
+                  else { prev.price = item.price; prev.vol += item.volume; }
+                }
+                const entries = [...byMinute.entries()];
+                if (!entries.length) return;
+                const prices = entries.map(([, v]) => v.price);
+                const minP = Math.min(...prices);
+                const maxP = Math.max(...prices);
+                const range = maxP - minP || 1;
+                const w = el.clientWidth || 400;
+                const h = 200;
+                const pad = { l: 50, r: 10, t: 10, b: 30 };
+                const cw = w - pad.l - pad.r;
+                const ch = h - pad.t - pad.b;
+                const basePrice = detail?.["昨收"] || prices[0];
+                let svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">`;
+                // Grid lines
+                for (let i = 0; i <= 4; i++) {
+                  const y = pad.t + (ch / 4) * i;
+                  const p = maxP - (range / 4) * i;
+                  svg += `<line x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}" stroke="#30363d" stroke-width="0.5"/>`;
+                  svg += `<text x="${pad.l-4}" y="${y+3}" text-anchor="end" fill="#8b949e" font-size="10">${p.toFixed(2)}</text>`;
+                }
+                // Base price line
+                const baseY = pad.t + ch * (1 - (basePrice - minP) / range);
+                if (baseY > pad.t && baseY < pad.t + ch) {
+                  svg += `<line x1="${pad.l}" y1="${baseY}" x2="${w-pad.r}" y2="${baseY}" stroke="#8b949e" stroke-dasharray="3,3" stroke-width="0.5"/>`;
+                }
+                // Price line
+                const pts = entries.map(([t, v], i) => {
+                  const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
+                  const y = pad.t + ch * (1 - (v.price - minP) / range);
+                  return `${x},${y}`;
+                }).join(" ");
+                svg += `<polyline points="${pts}" fill="none" stroke="#58a6ff" stroke-width="1.5"/>`;
+                // Time labels
+                const step = Math.max(1, Math.floor(entries.length / 5));
+                for (let i = 0; i < entries.length; i += step) {
+                  const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
+                  svg += `<text x="${x}" y="${h-5}" text-anchor="middle" fill="#8b949e" font-size="10">${entries[i][0]}</text>`;
+                }
+                svg += `</svg>`;
+                el.innerHTML = svg;
+              }} />
+            )}
+          </div>
+        )}
+
+        {detailTab === "bidask" && (
+          <div className="bidask-content">
+            {!bidAskData ? (
+              <div className="data-error"><span className="error-icon">!</span><span>盘口数据加载失败</span></div>
+            ) : (
+              <div className="bidask-grid">
+                <div className="bidask-sell-side">
+                  {[5, 4, 3, 2, 1].map((i) => (
+                    <div key={i} className="bidask-row sell-row">
+                      <span className="bidask-label">卖{ i}</span>
+                      <span className="bidask-price loss">{bidAskData[`sell_${i}` as keyof BidAskData].toFixed(2)}</span>
+                      <span className="bidask-vol">{(bidAskData[`sell_${i}_vol` as keyof BidAskData] as number / 100).toFixed(0)}手</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="bidask-divider">
+                  <span className="bidask-latest">{bidAskData.latest.toFixed(2)}</span>
+                  <span className="bidask-limits">涨停 {bidAskData.limit_up.toFixed(2)} / 跌停 {bidAskData.limit_down.toFixed(2)}</span>
+                </div>
+                <div className="bidask-buy-side">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="bidask-row buy-row">
+                      <span className="bidask-label">买{i}</span>
+                      <span className="bidask-price profit">{bidAskData[`buy_${i}` as keyof BidAskData].toFixed(2)}</span>
+                      <span className="bidask-vol">{(bidAskData[`buy_${i}_vol` as keyof BidAskData] as number / 100).toFixed(0)}手</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {detailTab === "fundflow" && (
+          <div className="fundflow-content">
+            {fundFlowData.length === 0 ? (
+              <div className="data-error"><span className="error-icon">!</span><span>资金流向数据加载失败</span></div>
+            ) : (
+              <table className="stock-table fundflow-table">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>收盘</th>
+                    <th>涨跌%</th>
+                    <th>主力净流入</th>
+                    <th>主力占比</th>
+                    <th>超大单</th>
+                    <th>大单</th>
+                    <th>中单</th>
+                    <th>小单</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fundFlowData.slice(0, 20).map((r, i) => {
+                    const fmtAmt = (v: number) => {
+                      if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2) + "亿";
+                      if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(0) + "万";
+                      return v.toFixed(0);
+                    };
+                    return (
+                      <tr key={i}>
+                        <td>{r.date}</td>
+                        <td>{r.close.toFixed(2)}</td>
+                        <td className={r.change_pct >= 0 ? "profit" : "loss"}>{r.change_pct >= 0 ? "+" : ""}{r.change_pct.toFixed(2)}%</td>
+                        <td className={r.main_net >= 0 ? "profit" : "loss"}>{fmtAmt(r.main_net)}</td>
+                        <td className={r.main_pct >= 0 ? "profit" : "loss"}>{r.main_pct >= 0 ? "+" : ""}{r.main_pct.toFixed(2)}%</td>
+                        <td className={r.huge_net >= 0 ? "profit" : "loss"}>{fmtAmt(r.huge_net)}</td>
+                        <td className={r.big_net >= 0 ? "profit" : "loss"}>{fmtAmt(r.big_net)}</td>
+                        <td className={r.mid_net >= 0 ? "profit" : "loss"}>{fmtAmt(r.mid_net)}</td>
+                        <td className={r.small_net >= 0 ? "profit" : "loss"}>{fmtAmt(r.small_net)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
       {pos && (
         <div className="detail-position">
           <span>持仓: <strong>{pos.quantity}股</strong></span>

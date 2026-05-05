@@ -187,6 +187,61 @@ export interface Dashboard {
   market_status: MarketStatus;
 }
 
+export interface FinancialAbstract {
+  [key: string]: string;
+}
+
+export interface FinancialStatement {
+  [key: string]: string;
+}
+
+export interface StockNews {
+  title: string;
+  url: string;
+  source: string;
+  time: string;
+}
+
+export interface IntradayItem {
+  time: string;
+  price: number;
+  volume: number;
+  nature: string;
+}
+
+export interface BidAskData {
+  buy_1: number; buy_1_vol: number;
+  buy_2: number; buy_2_vol: number;
+  buy_3: number; buy_3_vol: number;
+  buy_4: number; buy_4_vol: number;
+  buy_5: number; buy_5_vol: number;
+  sell_1: number; sell_1_vol: number;
+  sell_2: number; sell_2_vol: number;
+  sell_3: number; sell_3_vol: number;
+  sell_4: number; sell_4_vol: number;
+  sell_5: number; sell_5_vol: number;
+  latest: number;
+  avg: number;
+  limit_up: number;
+  limit_down: number;
+}
+
+export interface FundFlowItem {
+  date: string;
+  close: number;
+  change_pct: number;
+  main_net: number;
+  main_pct: number;
+  huge_net: number;
+  huge_pct: number;
+  big_net: number;
+  big_pct: number;
+  mid_net: number;
+  mid_pct: number;
+  small_net: number;
+  small_pct: number;
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -321,4 +376,18 @@ export const api = {
     invalidateCache("/trade/alert");
     return request(`/trade/alert/${id}/cancel`, { method: "POST" });
   },
+  getFinancialAbstract: (code: string) =>
+    request<FinancialAbstract[]>(`/market/financial/abstract/${code}`),
+  getFinancialStatement: (code: string, type: string) =>
+    request<FinancialStatement[]>(`/market/financial/statement/${code}?type=${encodeURIComponent(type)}`),
+  getStockNews: (code: string) =>
+    request<StockNews[]>(`/market/news/${code}`),
+  getIntraday: (code: string) =>
+    request<IntradayItem[]>(`/market/intraday/${code}`),
+  getBidAsk: (code: string) =>
+    request<BidAskData>(`/market/bidask/${code}`),
+  getFundFlow: (code: string) =>
+    request<FundFlowItem[]>(`/market/fund-flow/${code}`),
+  getMinuteHistory: (code: string, period: string = "1") =>
+    request<KLineItem[]>(`/market/minute/${code}?period=${period}`),
 };

@@ -1,281 +1,97 @@
 import time
 import threading
-import requests
+import numpy as np
+import akshare as ak
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from collections import OrderedDict
 
-_BASE_URL = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
-_TENCENT_URL = "https://qt.gtimg.cn/q="
+# ─── 缓存配置 ───
 
 _cache_timeout = 60
-_refresh_ahead = 10  # 提前10秒后台刷新
+_refresh_ahead = 10
 _last_fetch_time = 0.0
 _cached_stocks: list[dict] = []
-_stock_index: dict[str, dict] = {}  # code -> stock dict，O(1)查找
-_price_map_cache: dict[str, float] = {}  # code -> 最新价
-_fetching = False  # 防缓存击穿标记
-_refreshing = False  # 后台刷新标记
+_stock_index: dict[str, dict] = {}
+_price_map_cache: dict[str, float] = {}
+_fetching = False
+_refreshing = False
 
 # 行业板块缓存（5分钟）
-_sector_cache: dict[str, str] = {}  # code -> sector_name
-_sector_cache_time = 0.0
-_sector_list_cache: list[dict] = []  # [{name, code}]
+_sector_list_cache: list[dict] = []
 _sector_list_cache_time = 0.0
+_sector_constituent_cache: dict[str, tuple[float, set[str]]] = {}  # sector_name -> (ts, codes)
+_sector_constituent_timeout = 300
 
 # 板块概览缓存（5分钟）
 _sector_overview_cache: list[dict] = []
 _sector_overview_cache_time = 0.0
 
 # K线缓存（60秒）
-_kline_cache: dict[str, tuple[float, list[dict]]] = {}  # key -> (timestamp, data)
+_kline_cache: dict[str, tuple[float, list[dict]]] = {}
 _kline_cache_timeout = 60
 
 # 大盘指数缓存（60秒）
 _index_cache: tuple[float, list[dict]] = (0.0, [])
 _index_cache_timeout = 60
 
-# 连接池
-_session = requests.Session()
-_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8))
-_session.mount("http://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8))
+# 52周高低缓存（5分钟）
+_52week_cache: dict[str, tuple[float, float, float]] = {}  # code -> (ts, high, low)
+_52week_cache_timeout = 300
 
 _executor = ThreadPoolExecutor(max_workers=8)
 
 
-def _fetch_page(page: int, page_size: int = 80) -> list[dict]:
-    """获取单页行情数据。"""
-    try:
-        r = _session.get(_BASE_URL, params={
-            "page": page, "num": page_size,
-            "sort": "changepercent", "asc": 0,
-            "node": "hs_a", "symbol": "", "_s_r_a": "page",
-        }, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if not data:
-            return []
-        return [_parse_sina_item(item) for item in data]
-    except Exception:
-        return []
+# ─── AKShare 数据转换 ───
 
+def _safe_float(val, default=0.0) -> float:
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _convert_ak_spot(df) -> list[dict]:
+    """将 ak.stock_zh_a_spot_em() 的 DataFrame 转为统一中文 key 格式。"""
+    result = []
+    for _, row in df.iterrows():
+        price = _safe_float(row.get("最新价", 0))
+        result.append({
+            "代码": str(row.get("代码", "")),
+            "名称": str(row.get("名称", "")),
+            "最新价": price,
+            "涨跌额": _safe_float(row.get("涨跌额", 0)),
+            "涨跌幅": _safe_float(row.get("涨跌幅", 0)),
+            "今开": _safe_float(row.get("今开", 0)),
+            "最高": _safe_float(row.get("最高", 0)),
+            "最低": _safe_float(row.get("最低", 0)),
+            "昨收": _safe_float(row.get("昨收", 0)),
+            "买一": price,  # akshare 列表不返回买卖盘，默认为最新价
+            "卖一": price,
+            "成交量": int(_safe_float(row.get("成交量", 0))),
+            "成交额": _safe_float(row.get("成交额", 0)),
+            "换手率": _safe_float(row.get("换手率", 0)),
+            "市盈率-动态": _safe_float(row.get("市盈率-动态", 0)),
+            "市净率": _safe_float(row.get("市净率", 0)),
+            "总市值": _safe_float(row.get("总市值", 0)),
+            "流通市值": _safe_float(row.get("流通市值", 0)),
+            "量比": _safe_float(row.get("量比", 0)),
+        })
+    return result
+
+
+# ─── 全市场行情 ───
 
 def _fetch_all_stocks() -> list[dict]:
-    """从新浪财经并发获取全市场A股实时行情。"""
-    # 先获取第一页，确定总页数
-    first_page = _fetch_page(1)
-    if not first_page:
-        return []
-    page_size = 80
-    # 新浪不返回总数，逐页探测；先并发请求后续页
-    futures = {_executor.submit(_fetch_page, p): p for p in range(2, 85)}
-    all_stocks = list(first_page)
-    last_empty = False
-    for future in as_completed(futures):
-        result = future.result()
-        if not result:
-            last_empty = True
-            continue
-        if len(result) < page_size:
-            last_empty = True
-        all_stocks.extend(result)
-    return all_stocks
-
-
-def _parse_sina_item(item: dict) -> dict:
-    """将新浪API返回的单条数据解析为统一格式。"""
-    return {
-        "代码": item.get("code", ""),
-        "名称": item.get("name", ""),
-        "最新价": float(item.get("trade", 0) or 0),
-        "涨跌额": float(item.get("pricechange", 0) or 0),
-        "涨跌幅": float(item.get("changepercent", 0) or 0),
-        "今开": float(item.get("open", 0) or 0),
-        "最高": float(item.get("high", 0) or 0),
-        "最低": float(item.get("low", 0) or 0),
-        "昨收": float(item.get("settlement", 0) or 0),
-        "买一": float(item.get("buy", 0) or 0),
-        "卖一": float(item.get("sell", 0) or 0),
-        "成交量": int(float(item.get("volume", 0) or 0)),
-        "成交额": float(item.get("amount", 0) or 0),
-        "换手率": float(item.get("turnoverratio", 0) or 0),
-        "市盈率-动态": float(item.get("per", 0) or 0),
-        "市净率": float(item.get("pb", 0) or 0),
-        "总市值": float(item.get("mktcap", 0) or 0) * 10000,
-        "流通市值": float(item.get("nmc", 0) or 0) * 10000,
-    }
-
-
-def _fetch_tencent_batch(codes: list[str]) -> dict[str, dict]:
-    """从腾讯API批量获取量比、52周高低等额外字段。"""
-    symbols = []
-    for code in codes:
-        prefix = "sh" if code.startswith("6") or code.startswith("9") else "sz"
-        symbols.append(f"{prefix}{code}")
-    result: dict[str, dict] = {}
-
-    def _fetch_tencent_chunk(chunk_symbols: list[str]) -> dict[str, dict]:
-        chunk_result: dict[str, dict] = {}
-        try:
-            r = _session.get(_TENCENT_URL + ",".join(chunk_symbols), timeout=10)
-            for line in r.text.split(";"):
-                line = line.strip()
-                if not line or "~" not in line:
-                    continue
-                parts = line.split("~")
-                if len(parts) < 49:
-                    continue
-                code = parts[2] if len(parts) > 2 else ""
-                if not code:
-                    continue
-                chunk_result[code] = {
-                    "量比": float(parts[43]) if len(parts) > 43 and parts[43] else 0,
-                    "52周最高": float(parts[47]) if len(parts) > 47 and parts[47] else 0,
-                    "52周最低": float(parts[48]) if len(parts) > 48 and parts[48] else 0,
-                }
-        except Exception:
-            pass
-        return chunk_result
-
-    # 并发请求腾讯API，每批50只
-    chunks = [symbols[i:i+50] for i in range(0, len(symbols), 50)]
-    futures = [_executor.submit(_fetch_tencent_chunk, chunk) for chunk in chunks]
-    for future in as_completed(futures):
-        result.update(future.result())
-    return result
-
-
-def _fetch_sector_list() -> list[dict]:
-    """从新浪获取行业板块列表。"""
-    global _sector_list_cache, _sector_list_cache_time
-    now = time.time()
-    if _sector_list_cache and now - _sector_list_cache_time < 300:
-        return _sector_list_cache
+    """通过 AKShare (东方财富) 获取全市场 A 股实时行情。"""
     try:
-        r = _session.get(
-            "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodes",
-            timeout=10,
-        )
-        data = r.json()
-        sectors = _extract_sectors(data)
-        _sector_list_cache = sectors
-        _sector_list_cache_time = now
-        return sectors
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return []
+        return _convert_ak_spot(df)
     except Exception:
         return []
-
-
-def _extract_sectors(node) -> list[dict]:
-    """递归解析新浪嵌套JSON，提取行业列表。"""
-    result = []
-    if isinstance(node, list):
-        for item in node:
-            if isinstance(item, str) and item.startswith("new_"):
-                pass
-            elif isinstance(item, list):
-                if len(item) == 3 and isinstance(item[0], str) and isinstance(item[2], str) and item[2].startswith("new_"):
-                    result.append({"name": item[0], "code": item[2]})
-                else:
-                    result.extend(_extract_sectors(item))
-    return result
-
-
-def _fetch_sector_page(sector_code: str, sector_name: str) -> list[tuple[str, str]]:
-    """获取单个行业的股票列表，返回 [(code, sector_name)]。"""
-    try:
-        r = _session.get(_BASE_URL, params={
-            "page": 1, "num": 200,
-            "sort": "changepercent", "asc": 0,
-            "node": sector_code, "symbol": "", "_s_r_a": "page",
-        }, timeout=10)
-        data = r.json()
-        if data:
-            return [(item.get("code", ""), sector_name) for item in data if item.get("code")]
-    except Exception:
-        pass
-    return []
-
-
-def _fetch_sector_mapping() -> dict[str, str]:
-    """构建 代码→行业名称 映射（并发获取各行业板块）。"""
-    global _sector_cache, _sector_cache_time
-    now = time.time()
-    if _sector_cache and now - _sector_cache_time < 300:
-        return _sector_cache
-    sectors = _fetch_sector_list()
-    mapping: dict[str, str] = {}
-    # 并发请求所有行业
-    futures = [
-        _executor.submit(_fetch_sector_page, s["code"], s["name"])
-        for s in sectors[:48]
-    ]
-    for future in as_completed(futures):
-        for code, name in future.result():
-            mapping[code] = name
-    _sector_cache = mapping
-    _sector_cache_time = now
-    return mapping
-
-
-def get_sector_list() -> list[dict]:
-    """返回行业板块列表。"""
-    return _fetch_sector_list()
-
-
-def get_sector_overview() -> list[dict]:
-    """返回各行业板块概览：平均涨跌幅、涨跌家数、成交额、新高新低、领涨股。带5分钟缓存。"""
-    global _sector_overview_cache, _sector_overview_cache_time
-    now = time.time()
-    if _sector_overview_cache and now - _sector_overview_cache_time < 300:
-        return _sector_overview_cache
-
-    stocks = get_spot_data()
-    mapping = _fetch_sector_mapping()
-
-    # 按行业分组
-    groups: dict[str, list[dict]] = {}
-    for s in stocks:
-        sector_name = mapping.get(s["代码"])
-        if not sector_name:
-            continue
-        groups.setdefault(sector_name, []).append(s)
-
-    # 补充52周数据（全量，因为需要统计新高新低）
-    all_codes = [s["代码"] for sector_stocks in groups.values() for s in sector_stocks]
-    extra = _fetch_tencent_batch(all_codes) if all_codes else {}
-    for s in stocks:
-        ext = extra.get(s["代码"], {})
-        s["52周最高"] = ext.get("52周最高", 0)
-        s["52周最低"] = ext.get("52周最低", 0)
-
-    # 聚合计算
-    result = []
-    for sector_name, sector_stocks in groups.items():
-        up = sum(1 for s in sector_stocks if s["涨跌幅"] > 0)
-        down = sum(1 for s in sector_stocks if s["涨跌幅"] < 0)
-        avg_change = sum(s["涨跌幅"] for s in sector_stocks) / len(sector_stocks) if sector_stocks else 0
-        total_amount = sum(s["成交额"] for s in sector_stocks)
-        new_high = sum(1 for s in sector_stocks if s.get("52周最高") and s["最新价"] >= s["52周最高"] * 0.95)
-        new_low = sum(1 for s in sector_stocks if s.get("52周最低") and s["最新价"] <= s["52周最低"] * 1.05)
-
-        top3 = sorted(sector_stocks, key=lambda s: s["涨跌幅"], reverse=True)[:3]
-        result.append({
-            "name": sector_name,
-            "avg_change_pct": round(avg_change, 2),
-            "up_count": up,
-            "down_count": down,
-            "amount": round(total_amount),
-            "new_high_count": new_high,
-            "new_low_count": new_low,
-            "top_stocks": [
-                {"代码": s["代码"], "名称": s["名称"], "涨跌幅": round(s["涨跌幅"], 2)}
-                for s in top3
-            ],
-        })
-
-    result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
-    _sector_overview_cache = result
-    _sector_overview_cache_time = now
-    return result
 
 
 def get_spot_data() -> list[dict]:
@@ -283,10 +99,8 @@ def get_spot_data() -> list[dict]:
     global _cached_stocks, _last_fetch_time, _fetching, _refreshing
     global _stock_index, _price_map_cache
     now = time.time()
-    # 缓存有效，直接返回
     if _cached_stocks and now - _last_fetch_time < _cache_timeout - _refresh_ahead:
         return _cached_stocks
-    # 缓存即将过期但还没完全过期，触发后台刷新，仍然返回旧数据
     if _cached_stocks and now - _last_fetch_time < _cache_timeout:
         if not _refreshing:
             _refreshing = True
@@ -306,9 +120,8 @@ def get_spot_data() -> list[dict]:
                     _refreshing = False
             threading.Thread(target=_bg_refresh, daemon=True).start()
         return _cached_stocks
-    # 缓存完全过期，需要同步刷新
     if _fetching:
-        return _cached_stocks  # 正在刷新，返回旧数据
+        return _cached_stocks
     _fetching = True
     try:
         data = _fetch_all_stocks()
@@ -323,35 +136,59 @@ def get_spot_data() -> list[dict]:
 
 
 def get_stock_by_code(code: str) -> dict | None:
-    """O(1)按代码查找股票，避免遍历全量数据。"""
-    get_spot_data()  # 确保索引已构建
+    """O(1)按代码查找股票。"""
+    get_spot_data()
     return _stock_index.get(code)
 
 
 def get_price_map() -> dict[str, float]:
-    """返回 code->最新价 映射，避免重复计算。"""
-    get_spot_data()  # 确保数据已加载
+    """返回 code->最新价 映射。"""
+    get_spot_data()
     return _price_map_cache
 
 
-def _enrich_with_tencent(stocks: list[dict], codes: list[str]) -> list[dict]:
-    """用腾讯数据补充量比、52周高低。"""
-    extra = _fetch_tencent_batch(codes)
+# ─── 52 周高低 ───
+
+def _compute_52week(code: str) -> tuple[float, float]:
+    """从日K线计算52周最高/最低，缓存5分钟。"""
+    now = time.time()
+    if code in _52week_cache:
+        ts, high, low = _52week_cache[code]
+        if now - ts < _52week_cache_timeout:
+            return high, low
+    try:
+        start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, adjust="qfq")
+        if df is None or df.empty:
+            return 0.0, 0.0
+        high52 = float(df["最高"].max())
+        low52 = float(df["最低"].min())
+        _52week_cache[code] = (now, high52, low52)
+        return high52, low52
+    except Exception:
+        return 0.0, 0.0
+
+
+def _enrich_with_52week(stocks: list[dict], limit: int = 500) -> None:
+    """对预筛选股票并行计算52周高低，就地修改。"""
+    if not stocks:
+        return
+    codes = [s["代码"] for s in stocks[:limit]]
+    futures = {_executor.submit(_compute_52week, code): code for code in codes}
+    results: dict[str, tuple[float, float]] = {}
+    for future in as_completed(futures):
+        code = futures[future]
+        try:
+            results[code] = future.result()
+        except Exception:
+            results[code] = (0.0, 0.0)
     for s in stocks:
-        ext = extra.get(s["代码"], {})
-        s["量比"] = ext.get("量比", 0)
-        s["52周最高"] = ext.get("52周最高", 0)
-        s["52周最低"] = ext.get("52周最低", 0)
-    return stocks
+        high, low = results.get(s["代码"], (0.0, 0.0))
+        s["52周最高"] = high
+        s["52周最低"] = low
 
 
-def _enrich_with_consecutive_days(stocks: list[dict]) -> list[dict]:
-    """计算连涨/连跌天数（从日K线）。"""
-    for s in stocks:
-        s["连涨天数"] = 0
-        s["连跌天数"] = 0
-    return stocks
-
+# ─── 连涨连跌 ───
 
 def compute_consecutive_days(code: str) -> dict:
     """计算单只股票连涨/连跌天数。"""
@@ -374,6 +211,8 @@ def compute_consecutive_days(code: str) -> dict:
             break
     return {"连涨天数": up_days, "连跌天数": down_days}
 
+
+# ─── 筛选 ───
 
 def filter_low_price(
     min_price: float = 1.0,
@@ -406,16 +245,16 @@ def filter_low_price(
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
-    """筛选低价股，返回分页结果。"""
+    """筛选低价股，返回分页结果。单次遍历筛选（量比已在行情数据中）。"""
     stocks = get_spot_data()
 
-    # 行业筛选需要先构建映射
-    sector_mapping: dict[str, str] = {}
+    # 行业筛选：按需获取成分股代码集合
+    sector_codes: set[str] | None = None
     if sector:
-        sector_mapping = _fetch_sector_mapping()
+        sector_codes = _fetch_sector_constituents(sector)
 
-    # 第一轮：用基础条件快速筛选（不含量比/52周）
-    pre_filtered = []
+    # 单次遍历筛选
+    filtered = []
     for s in stocks:
         if not (min_price <= s["最新价"] <= max_price):
             continue
@@ -450,46 +289,32 @@ def filter_low_price(
             continue
         if max_amplitude is not None and amplitude > max_amplitude:
             continue
+        # 量比筛选（已在行情数据中）
+        if min_volume_ratio is not None and s.get("量比", 0) < min_volume_ratio:
+            continue
+        if max_volume_ratio is not None and s.get("量比", 0) > max_volume_ratio:
+            continue
         if exclude_st and ("ST" in s["名称"] or "st" in s["名称"]):
             continue
         if only_st and "ST" not in s["名称"] and "st" not in s["名称"]:
             continue
         if keyword and keyword not in s["名称"] and keyword not in s["代码"]:
             continue
-        if sector:
-            stock_sector = sector_mapping.get(s["代码"], "")
-            if stock_sector != sector:
-                continue
-        pre_filtered.append(s)
-
-    # 第二轮：对预筛选结果补充腾讯数据（只在需要时）
-    need_tencent = min_volume_ratio is not None or max_volume_ratio is not None or near_52week_high or near_52week_low
-    if need_tencent and pre_filtered:
-        codes = [s["代码"] for s in pre_filtered[:500]]  # 最多500只
-        _enrich_with_tencent(pre_filtered[:500], codes)
-
-    # 第三轮：用量比/52周条件过滤
-    filtered = []
-    for s in pre_filtered:
-        if min_volume_ratio is not None and s.get("量比", 0) < min_volume_ratio:
+        if sector and sector_codes is not None and s["代码"] not in sector_codes:
             continue
-        if max_volume_ratio is not None and s.get("量比", 0) > max_volume_ratio:
-            continue
-        if near_52week_high:
-            high_52 = s.get("52周最高", 0)
-            if not high_52 or s["最新价"] < high_52 * 0.95:
-                continue
-        if near_52week_low:
-            low_52 = s.get("52周最低", 0)
-            if not low_52 or s["最新价"] > low_52 * 1.05:
-                continue
         filtered.append(s)
 
+    # 52周筛选：仅当请求时，对预筛选结果并行计算
+    need_52week = near_52week_high or near_52week_low
+    if need_52week and filtered:
+        _enrich_with_52week(filtered)
+        if near_52week_high:
+            filtered = [s for s in filtered if s.get("52周最高") and s["最新价"] >= s["52周最高"] * 0.95]
+        if near_52week_low:
+            filtered = [s for s in filtered if s.get("52周最低") and s["最新价"] <= s["52周最低"] * 1.05]
+
     reverse = sort_order == "desc"
-    if sort_by in ("量比", "52周最高", "52周最低") and need_tencent:
-        filtered.sort(key=lambda s: s.get(sort_by, 0), reverse=reverse)
-    else:
-        filtered.sort(key=lambda s: s.get(sort_by, 0), reverse=reverse)
+    filtered.sort(key=lambda s: s.get(sort_by, 0), reverse=reverse)
 
     total = len(filtered)
     start = (page - 1) * page_size
@@ -503,64 +328,105 @@ def filter_low_price(
     }
 
 
+# ─── 股票详情 ───
+
 def get_stock_detail(code: str) -> dict:
-    """获取单只股票详细行情。并发拉取腾讯数据、连涨跌天数、行业映射。"""
+    """获取单只股票详细行情。并发获取买卖盘、52周、行业信息。"""
     s = get_stock_by_code(code)
     if s:
         s = dict(s)  # 浅拷贝避免污染缓存
-        f_tencent = _executor.submit(_fetch_tencent_batch, [code])
+
+        f_52week = _executor.submit(_compute_52week, code)
         f_consec = _executor.submit(compute_consecutive_days, code)
-        f_sector = _executor.submit(_fetch_sector_mapping)
+        f_info = _executor.submit(_fetch_stock_info, code)
 
-        ext = f_tencent.result().get(code, {})
-        s["量比"] = ext.get("量比", 0)
-        s["52周最高"] = ext.get("52周最高", 0)
-        s["52周最低"] = ext.get("52周最低", 0)
+        # 买卖盘
+        try:
+            bidask_df = ak.stock_bid_ask_em(symbol=code)
+            if bidask_df is not None and not bidask_df.empty:
+                bidask = dict(zip(bidask_df["item"], bidask_df["value"]))
+                s["买一"] = _safe_float(bidask.get("buy_1"), s["最新价"])
+                s["卖一"] = _safe_float(bidask.get("sell_1"), s["最新价"])
+                if "量比" in bidask:
+                    s["量比"] = _safe_float(bidask["量比"])
+        except Exception:
+            pass
 
+        # 52周
+        high52, low52 = f_52week.result()
+        s["52周最高"] = high52
+        s["52周最低"] = low52
+
+        # 连涨跌
         consec = f_consec.result()
         s["连涨天数"] = consec["连涨天数"]
         s["连跌天数"] = consec["连跌天数"]
 
-        s["行业"] = f_sector.result().get(code, "")
+        # 行业
+        s["行业"] = f_info.result()
+
         return s
 
-    prefix = "sh" if code.startswith("6") else "sz"
+    # 非A股列表中的股票：通过个股信息接口构建
     try:
-        r = _session.get(f"https://qt.gtimg.cn/q={prefix}{code}", timeout=10)
-        text = r.text
-        if '~' not in text:
-            return {}
-        parts = text.split('~')
+        f_info = _executor.submit(_fetch_stock_info, code)
+        bidask_df = ak.stock_bid_ask_em(symbol=code)
+        bidask: dict = {}
+        if bidask_df is not None and not bidask_df.empty:
+            bidask = dict(zip(bidask_df["item"], bidask_df["value"]))
+
+        info = f_info.result()
+        price = _safe_float(bidask.get("最新", 0))
+        yesterday = _safe_float(bidask.get("昨收", 0))
         return {
             "代码": code,
-            "名称": parts[1] if len(parts) > 1 else "",
-            "最新价": float(parts[3]) if len(parts) > 3 and parts[3] else 0,
-            "昨收": float(parts[4]) if len(parts) > 4 and parts[4] else 0,
-            "今开": float(parts[5]) if len(parts) > 5 and parts[5] else 0,
-            "成交量": int(float(parts[6])) if len(parts) > 6 and parts[6] else 0,
-            "最高": float(parts[33]) if len(parts) > 33 and parts[33] else 0,
-            "最低": float(parts[34]) if len(parts) > 34 and parts[34] else 0,
-            "涨跌额": float(parts[31]) if len(parts) > 31 and parts[31] else 0,
-            "涨跌幅": float(parts[32]) if len(parts) > 32 and parts[32] else 0,
-            "买一": float(parts[9]) if len(parts) > 9 and parts[9] else 0,
-            "卖一": float(parts[18]) if len(parts) > 18 and parts[18] else 0,
-            "成交额": float(parts[37]) if len(parts) > 37 and parts[37] else 0,
-            "换手率": float(parts[38]) if len(parts) > 38 and parts[38] else 0,
-            "市盈率-动态": float(parts[39]) if len(parts) > 39 and parts[39] else 0,
-            "总市值": float(parts[45]) if len(parts) > 45 and parts[45] else 0,
-            "流通市值": float(parts[44]) if len(parts) > 44 and parts[44] else 0,
-            "市净率": float(parts[46]) if len(parts) > 46 and parts[46] else 0,
-            "量比": float(parts[43]) if len(parts) > 43 and parts[43] else 0,
-            "52周最高": float(parts[47]) if len(parts) > 47 and parts[47] else 0,
-            "52周最低": float(parts[48]) if len(parts) > 48 and parts[48] else 0,
-            "连涨天数": 0, "连跌天数": 0, "行业": "",
+            "名称": str(bidask.get("名称", "")),
+            "最新价": price,
+            "昨收": yesterday,
+            "今开": _safe_float(bidask.get("今开", 0)),
+            "成交量": int(_safe_float(bidask.get("总手", 0))),
+            "最高": _safe_float(bidask.get("最高", 0)),
+            "最低": _safe_float(bidask.get("最低", 0)),
+            "涨跌额": _safe_float(bidask.get("涨跌", 0)),
+            "涨跌幅": _safe_float(bidask.get("涨幅", 0)),
+            "买一": _safe_float(bidask.get("buy_1"), price),
+            "卖一": _safe_float(bidask.get("sell_1"), price),
+            "成交额": _safe_float(bidask.get("金额", 0)),
+            "换手率": _safe_float(bidask.get("换手", 0)),
+            "市盈率-动态": 0,
+            "总市值": 0,
+            "流通市值": 0,
+            "市净率": 0,
+            "量比": _safe_float(bidask.get("量比", 0)),
+            "52周最高": 0,
+            "52周最低": 0,
+            "连涨天数": 0,
+            "连跌天数": 0,
+            "行业": info,
         }
     except Exception:
         return {}
 
 
+def _fetch_stock_info(code: str) -> str:
+    """获取单只股票的行业信息。"""
+    try:
+        df = ak.stock_individual_info_em(symbol=code)
+        if df is not None and not df.empty:
+            info = dict(zip(df["item"], df["value"]))
+            return str(info.get("行业", ""))
+    except Exception:
+        pass
+    return ""
+
+
+# ─── K线历史 ───
+
+_KLINE_PERIOD_MAP = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
+
+
 def get_stock_history(code: str, period: str = "daily", start_date: str = "20250101") -> list[dict]:
-    """获取单只股票历史K线（通过新浪API），带60秒缓存。"""
+    """获取单只股票历史K线，带60秒缓存。原生支持日K/周K/月K。"""
     cache_key = f"{code}:{period}"
     now = time.time()
     if cache_key in _kline_cache:
@@ -568,60 +434,33 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
         if now - ts < _kline_cache_timeout:
             return data
 
-    prefix = "sh" if code.startswith("6") else "sz"
-    symbol = f"{prefix}{code}"
-    url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
-    scale_map = {"daily": "240", "weekly": "1200"}
-    scale = scale_map.get(period, "240")
-    datalen_map = {"daily": "250", "weekly": "150", "monthly": "500"}
-    datalen = datalen_map.get(period, "250")
-
+    ak_period = _KLINE_PERIOD_MAP.get(period, "daily")
     try:
-        r = _session.get(url, params={
-            "symbol": symbol, "scale": scale,
-            "ma": "no", "datalen": datalen,
-        }, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if not data:
+        df = ak.stock_zh_a_hist(symbol=code, period=ak_period, start_date=start_date, adjust="qfq")
+        if df is None or df.empty:
             return []
-        if period == "monthly":
-            data = _aggregate_monthly(data)
+        data = []
+        for _, row in df.iterrows():
+            data.append({
+                "day": str(row["日期"]),
+                "open": str(row["开盘"]),
+                "high": str(row["最高"]),
+                "low": str(row["最低"]),
+                "close": str(row["收盘"]),
+                "volume": str(row["成交量"]),
+            })
         _kline_cache[cache_key] = (now, data)
         return data
     except Exception:
         return []
 
 
-def _aggregate_monthly(daily_data: list[dict]) -> list[dict]:
-    """将日K数据聚合为月K。"""
-    months: OrderedDict[str, dict] = OrderedDict()
-    for d in daily_data:
-        month_key = d["day"][:7]
-        if month_key not in months:
-            months[month_key] = {
-                "day": month_key + "-01",
-                "open": d["open"],
-                "high": d["high"],
-                "low": d["low"],
-                "close": d["close"],
-                "volume": d["volume"],
-            }
-        else:
-            m = months[month_key]
-            m["high"] = str(max(float(m["high"]), float(d["high"])))
-            m["low"] = str(min(float(m["low"]), float(d["low"])))
-            m["close"] = d["close"]
-            m["volume"] = str(int(float(m["volume"])) + int(float(d["volume"])))
-    return list(months.values())
-
-
 # ─── 大盘指数 ───
 
-_INDEX_CODES = {
-    "sh000001": "上证指数",
-    "sz399001": "深证成指",
-    "sz399006": "创业板指",
+_INDEX_TARGETS = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "399006": "创业板指",
 }
 
 
@@ -633,35 +472,419 @@ def get_index_data() -> list[dict]:
     if cached and now - ts < _index_cache_timeout:
         return cached
 
-    symbols = ",".join(_INDEX_CODES.keys())
     try:
-        r = _session.get(f"https://hq.sinajs.cn/list={symbols}", headers={
-            "Referer": "https://finance.sina.com.cn",
-        }, timeout=10)
-        r.encoding = "gbk"
-        lines = r.text.strip().split("\n")
+        f_sh = _executor.submit(ak.stock_zh_index_spot_em, symbol="上证系列指数")
+        f_sz = _executor.submit(ak.stock_zh_index_spot_em, symbol="深证系列指数")
+
+        df_sh = f_sh.result()
+        df_sz = f_sz.result()
 
         result = []
-        for line in lines:
-            parts = line.split('="')
-            if len(parts) < 2:
+        for code, name in _INDEX_TARGETS.items():
+            df_src = df_sh if code.startswith("000") else df_sz
+            if df_src is None:
                 continue
-            code = parts[0].split("hq_str_")[1]
-            data = parts[1].rstrip('";').split(",")
-            if len(data) < 32:
+            match = df_src[df_src["代码"] == code]
+            if match.empty:
                 continue
-            name = data[0]
-            yesterday = float(data[2])
-            current = float(data[3])
-            change_pct = (current - yesterday) / yesterday * 100 if yesterday else 0
+            row = match.iloc[0]
+            current = _safe_float(row.get("最新价", 0))
+            yesterday = _safe_float(row.get("昨收", 0))
             result.append({
-                "code": code,
+                "code": f"{'sh' if code.startswith('000') else 'sz'}{code}",
                 "name": name,
                 "current": current,
                 "yesterday": yesterday,
-                "change_pct": round(change_pct, 2),
+                "change_pct": _safe_float(row.get("涨跌幅", 0)),
             })
-        _index_cache = (now, result)
+
+        if result:
+            _index_cache = (now, result)
         return result
     except Exception:
         return cached or []
+
+
+# ─── 行业板块 ───
+
+def _fetch_sector_list() -> list[dict]:
+    """通过 AKShare 获取行业板块列表，缓存5分钟。"""
+    global _sector_list_cache, _sector_list_cache_time
+    now = time.time()
+    if _sector_list_cache and now - _sector_list_cache_time < 300:
+        return _sector_list_cache
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is None or df.empty:
+            return []
+        sectors = []
+        for _, row in df.iterrows():
+            sectors.append({
+                "name": str(row.get("板块名称", "")),
+                "code": str(row.get("板块代码", "")),
+            })
+        _sector_list_cache = sectors
+        _sector_list_cache_time = now
+        return sectors
+    except Exception:
+        return []
+
+
+def _fetch_sector_constituents(sector_name: str) -> set[str]:
+    """获取某个行业的成分股代码集合，缓存5分钟。"""
+    now = time.time()
+    if sector_name in _sector_constituent_cache:
+        ts, codes = _sector_constituent_cache[sector_name]
+        if now - ts < _sector_constituent_timeout:
+            return codes
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=sector_name)
+        if df is None or df.empty:
+            return set()
+        codes = set(df["代码"].astype(str).tolist())
+        _sector_constituent_cache[sector_name] = (now, codes)
+        return codes
+    except Exception:
+        return set()
+
+
+def get_sector_list() -> list[dict]:
+    """返回行业板块列表。"""
+    return _fetch_sector_list()
+
+
+def get_sector_overview() -> list[dict]:
+    """返回各行业板块概览，带5分钟缓存。"""
+    global _sector_overview_cache, _sector_overview_cache_time
+    now = time.time()
+    if _sector_overview_cache and now - _sector_overview_cache_time < 300:
+        return _sector_overview_cache
+
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is None or df.empty:
+            return _sector_overview_cache or []
+
+        result = []
+        for _, row in df.iterrows():
+            top_name = str(row.get("领涨股票", ""))
+            top_change = _safe_float(row.get("领涨股票-涨跌幅", 0))
+            result.append({
+                "name": str(row.get("板块名称", "")),
+                "avg_change_pct": round(_safe_float(row.get("涨跌幅", 0)), 2),
+                "up_count": int(_safe_float(row.get("上涨家数", 0))),
+                "down_count": int(_safe_float(row.get("下跌家数", 0))),
+                "amount": 0,  # 板块列表不含总成交额
+                "new_high_count": 0,  # 需逐股52周数据，代价过高
+                "new_low_count": 0,
+                "top_stocks": [{"代码": "", "名称": top_name, "涨跌幅": round(top_change, 2)}],
+            })
+
+        result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+        _sector_overview_cache = result
+        _sector_overview_cache_time = now
+        return result
+    except Exception:
+        return _sector_overview_cache or []
+
+
+# ─── 财务数据 ───
+
+_financial_cache: dict[str, tuple[float, list[dict]]] = {}
+_financial_cache_timeout = 300
+
+_statement_cache: dict[str, tuple[float, list[dict]]] = {}
+_statement_cache_timeout = 300
+
+_VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
+
+
+def _sina_prefix(code: str) -> str:
+    return "sh" if code.startswith("6") or code.startswith("9") else "sz"
+
+
+def get_financial_abstract(code: str) -> list[dict]:
+    """获取个股财务摘要（同花顺），返回最近8期，缓存5分钟。"""
+    cache_key = f"abstract:{code}"
+    now = time.time()
+    if cache_key in _financial_cache:
+        ts, data = _financial_cache[cache_key]
+        if now - ts < _financial_cache_timeout:
+            return data
+    try:
+        df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
+        if df is None or df.empty:
+            return []
+        df = df.head(8)
+        result = []
+        for _, row in df.iterrows():
+            item = {}
+            for col in df.columns:
+                val = row[col]
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    item[col] = ""
+                else:
+                    item[col] = str(val)
+            result.append(item)
+        _financial_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []
+
+
+def get_financial_statement(code: str, statement_type: str) -> list[dict]:
+    """获取三大报表原始数据，缓存5分钟。statement_type: 利润表/资产负债表/现金流量表"""
+    if statement_type not in _VALID_STATEMENTS:
+        return []
+    cache_key = f"stmt:{code}:{statement_type}"
+    now = time.time()
+    if cache_key in _statement_cache:
+        ts, data = _statement_cache[cache_key]
+        if now - ts < _statement_cache_timeout:
+            return data
+    try:
+        prefix = _sina_prefix(code)
+        df = ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol=statement_type)
+        if df is None or df.empty:
+            return []
+        df = df.head(8)
+        result = []
+        for _, row in df.iterrows():
+            item = {}
+            for col in df.columns:
+                val = row[col]
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    item[col] = ""
+                else:
+                    item[col] = str(val)
+            result.append(item)
+        _statement_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []
+
+
+# ─── 个股资讯 ───
+
+_news_cache: dict[str, tuple[float, list[dict]]] = {}
+_news_cache_timeout = 300
+
+
+def get_stock_news(code: str) -> list[dict]:
+    """获取个股新闻资讯（东方财富），缓存5分钟。"""
+    cache_key = f"news:{code}"
+    now = time.time()
+    if cache_key in _news_cache:
+        ts, data = _news_cache[cache_key]
+        if now - ts < _news_cache_timeout:
+            return data
+    try:
+        stock = _stock_index.get(code)
+        name = stock["名称"] if stock else code
+        import json
+        import requests
+
+        param = json.dumps({
+            "uid": "",
+            "keyword": name,
+            "type": ["cmsArticleWebOld"],
+            "client": "web",
+            "clientType": "web",
+            "clientVersion": "curr",
+            "param": {
+                "cmsArticleWebOld": {
+                    "searchScope": "default",
+                    "sort": "default",
+                    "pageIndex": 1,
+                    "pageSize": 15,
+                    "preTag": "",
+                    "postTag": "",
+                }
+            },
+        }, ensure_ascii=False)
+
+        r = requests.get(
+            "https://search-api-web.eastmoney.com/search/jsonp",
+            params={"cb": "jQuery", "param": param},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://so.eastmoney.com/",
+            },
+            timeout=10,
+        )
+        text = r.text
+        # JSONP 包裹: jQuery({...})
+        json_str = text[text.index("(") + 1 : text.rindex(")")]
+        data = json.loads(json_str)
+
+        articles = data.get("result", {}).get("cmsArticleWebOld", [])
+        if isinstance(articles, dict):
+            articles = articles.get("list", [])
+        result = []
+        for art in articles:
+            title = art.get("title", "").replace("<em>", "").replace("</em>", "")
+            url = art.get("url", "")
+            source = art.get("mediaName", "")
+            time_str = art.get("date", "")
+            if title:
+                result.append({
+                    "title": title,
+                    "url": url,
+                    "source": source,
+                    "time": time_str,
+                })
+        _news_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []
+
+
+# ─── 分时图 ───
+
+_intraday_cache: dict[str, tuple[float, list[dict]]] = {}
+_intraday_cache_timeout = 60
+
+
+def get_intraday(code: str) -> list[dict]:
+    """获取个股当日分时成交数据，缓存60秒。"""
+    cache_key = f"intraday:{code}"
+    now = time.time()
+    if cache_key in _intraday_cache:
+        ts, data = _intraday_cache[cache_key]
+        if now - ts < _intraday_cache_timeout:
+            return data
+    try:
+        df = ak.stock_intraday_em(symbol=code)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "time": str(row.iloc[0]),
+                "price": _safe_float(row.iloc[1]),
+                "volume": int(row.iloc[2]) if row.iloc[2] else 0,
+                "nature": str(row.iloc[3]),
+            })
+        _intraday_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []
+
+
+# ─── 五档盘口 ───
+
+_bidask_cache: dict[str, tuple[float, dict]] = {}
+_bidask_cache_timeout = 10
+
+
+def get_bid_ask(code: str) -> dict:
+    """获取个股五档盘口数据，缓存10秒。"""
+    cache_key = f"bidask:{code}"
+    now = time.time()
+    if cache_key in _bidask_cache:
+        ts, data = _bidask_cache[cache_key]
+        if now - ts < _bidask_cache_timeout:
+            return data
+    try:
+        df = ak.stock_bid_ask_em(symbol=code)
+        if df is None or df.empty:
+            return {}
+        raw = {}
+        for _, row in df.iterrows():
+            raw[row["item"]] = row["value"]
+        result = {}
+        for i in range(1, 6):
+            result[f"buy_{i}"] = _safe_float(raw.get(f"buy_{i}"))
+            result[f"buy_{i}_vol"] = int(_safe_float(raw.get(f"buy_{i}_vol", 0)))
+            result[f"sell_{i}"] = _safe_float(raw.get(f"sell_{i}"))
+            result[f"sell_{i}_vol"] = int(_safe_float(raw.get(f"sell_{i}_vol", 0)))
+        result["latest"] = _safe_float(raw.get("最新"))
+        result["avg"] = _safe_float(raw.get("均价"))
+        result["limit_up"] = _safe_float(raw.get("涨停"))
+        result["limit_down"] = _safe_float(raw.get("跌停"))
+        _bidask_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return {}
+
+
+# ─── 资金流向 ───
+
+_fund_flow_cache: dict[str, tuple[float, list[dict]]] = {}
+_fund_flow_cache_timeout = 300
+
+
+def _sz_sh_prefix(code: str) -> str:
+    """返回 sz/sh 前缀。"""
+    return "sh" if code.startswith(("6", "9")) else "sz"
+
+
+def get_fund_flow(code: str) -> list[dict]:
+    """获取个股资金流向（每日），缓存5分钟。"""
+    cache_key = f"fundflow:{code}"
+    now = time.time()
+    if cache_key in _fund_flow_cache:
+        ts, data = _fund_flow_cache[cache_key]
+        if now - ts < _fund_flow_cache_timeout:
+            return data
+    try:
+        market = _sz_sh_prefix(code)
+        df = ak.stock_individual_fund_flow(stock=code, market=market)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "date": str(row.iloc[0]),
+                "close": _safe_float(row.iloc[1]),
+                "change_pct": _safe_float(row.iloc[2]),
+                "main_net": _safe_float(row.iloc[3]),
+                "main_pct": _safe_float(row.iloc[4]),
+                "huge_net": _safe_float(row.iloc[5]),
+                "huge_pct": _safe_float(row.iloc[6]),
+                "big_net": _safe_float(row.iloc[7]),
+                "big_pct": _safe_float(row.iloc[8]),
+                "mid_net": _safe_float(row.iloc[9]),
+                "mid_pct": _safe_float(row.iloc[10]),
+                "small_net": _safe_float(row.iloc[11]),
+                "small_pct": _safe_float(row.iloc[12]),
+            })
+        _fund_flow_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []
+
+
+# ─── 分钟K线 ───
+
+_minute_cache: dict[str, tuple[float, list[dict]]] = {}
+_minute_cache_timeout = 60
+
+
+def get_minute_history(code: str, period: str = "1") -> list[dict]:
+    """获取分钟K线数据。period: 1/5/15/30/60，缓存60秒。"""
+    cache_key = f"minute:{code}:{period}"
+    now = time.time()
+    if cache_key in _minute_cache:
+        ts, data = _minute_cache[cache_key]
+        if now - ts < _minute_cache_timeout:
+            return data
+    try:
+        prefix = _sina_prefix(code)
+        df = ak.stock_zh_a_minute(symbol=f"{prefix}{code}", period=period)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "day": str(row["day"]),
+                "open": str(row["open"]),
+                "high": str(row["high"]),
+                "low": str(row["low"]),
+                "close": str(row["close"]),
+                "volume": str(row["volume"]),
+            })
+        _minute_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []

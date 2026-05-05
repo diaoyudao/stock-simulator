@@ -656,6 +656,99 @@
           "completed_in": "session-10"
         }
       ]
+    },
+    {
+      "id": "g12",
+      "title": "财务审计报表 + 资讯",
+      "state": "expanded",
+      "priority": 12,
+      "tasks": [
+        {
+          "id": "t27-fin",
+          "title": "财务摘要 + 三大报表 — 后端API",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/financial/abstract/000001 返回8期财务摘要", "passes": true},
+            {"step": "GET /market/financial/statement/000001?type=利润表 返回报表数据", "passes": true},
+            {"step": "不存在的股票返回空列表", "passes": true}
+          ],
+          "completed_in": "session-11"
+        },
+        {
+          "id": "t27-news",
+          "title": "个股资讯 — 后端API + 前端",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/news/000001 返回资讯列表", "passes": true},
+            {"step": "资讯列表显示标题/来源/时间", "passes": true},
+            {"step": "标题可点击跳转原文", "passes": true}
+          ],
+          "completed_in": "session-11"
+        },
+        {
+          "id": "t27-fin-fe",
+          "title": "财务报表 + 资讯前端Tab",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "详情页6个子Tab：K线/分时/盘口/资金/财务/资讯", "passes": true},
+            {"step": "财务摘要表格展示", "passes": true},
+            {"step": "错误/异常数据红色警告标识", "passes": true}
+          ],
+          "completed_in": "session-11"
+        }
+      ]
+    },
+    {
+      "id": "g13",
+      "title": "P1 详情页增强 — 分时/盘口/资金流向/分钟K线",
+      "state": "expanded",
+      "priority": 13,
+      "tasks": [
+        {
+          "id": "t27",
+          "title": "分时图 — 后端 + 前端SVG图表",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/intraday/000001 返回分时数据", "passes": true},
+            {"step": "BDD场景：获取个股分时数据 / 非交易时间 / 不存在股票", "passes": true},
+            {"step": "SVG折线图渲染价格走势", "passes": true}
+          ],
+          "completed_in": "session-11"
+        },
+        {
+          "id": "t28",
+          "title": "五档盘口 — 后端 + 前端买卖盘",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/bidask/000001 返回买1-5/卖1-5价格和挂单量", "passes": true},
+            {"step": "BDD场景：获取盘口 / 不存在股票", "passes": true},
+            {"step": "3列布局：卖盘 | 中间价 | 买盘", "passes": true}
+          ],
+          "completed_in": "session-11"
+        },
+        {
+          "id": "t29",
+          "title": "资金流向 — 后端 + 前端表格",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/fund-flow/000001 返回5类资金流向", "passes": true},
+            {"step": "BDD场景：获取资金流向 / 不存在股票", "passes": true},
+            {"step": "表格展示主力/超大单/大单/中单/小单净流入", "passes": true}
+          ],
+          "completed_in": "session-11"
+        },
+        {
+          "id": "t30",
+          "title": "分钟K线 — 后端 + 前端",
+          "kanban": "done",
+          "acceptance": [
+            {"step": "GET /market/minute/000001?period=1 返回分钟K线", "passes": true},
+            {"step": "BDD场景：获取分钟K线 / 不存在股票", "passes": true},
+            {"step": "lightweight-charts渲染分钟K线", "passes": true}
+          ],
+          "completed_in": "session-11"
+        }
+      ]
     }
   ],
   "discovered_tasks": [

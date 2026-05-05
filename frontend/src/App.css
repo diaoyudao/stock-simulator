@@ -209,6 +209,41 @@ body {
 
 .loading { text-align: center; padding: 40px; }
 
+.data-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  margin: 8px 0;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: 6px;
+  color: var(--profit);
+  font-size: 13px;
+}
+
+.error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--profit);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.empty-hint {
+  text-align: center;
+  padding: 32px;
+  color: var(--text);
+  opacity: 0.5;
+  font-size: 13px;
+}
+
 .stock-table {
   width: 100%;
   border-collapse: collapse;
@@ -512,6 +547,83 @@ body {
   width: 100%;
 }
 
+/* Financial table */
+.financial-content {
+  padding: 12px;
+}
+
+.financial-table-wrap {
+  overflow-x: auto;
+}
+
+.financial-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.financial-table th,
+.financial-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.financial-table th:first-child,
+.financial-table td:first-child {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.financial-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  background: var(--surface);
+}
+
+.fin-label {
+  color: var(--text-muted);
+  min-width: 120px;
+}
+
+/* News list */
+.news-content {
+  padding: 8px 12px;
+}
+
+.news-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: var(--text);
+  gap: 12px;
+}
+
+.news-item:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.news-title {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.news-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .detail-position {
   display: flex;
   gap: 24px;
@@ -519,6 +631,108 @@ body {
   background: var(--surface);
   border-radius: 6px;
   font-size: 14px;
+}
+
+/* Intraday chart */
+.intraday-content {
+  padding: 12px;
+}
+
+.intraday-chart-wrap {
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Bid-Ask panel */
+.bidask-content {
+  padding: 16px;
+}
+
+.bidask-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0;
+  align-items: stretch;
+}
+
+.bidask-sell-side, .bidask-buy-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bidask-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.sell-row { background: rgba(248, 81, 73, 0.06); }
+.buy-row { background: rgba(63, 185, 80, 0.06); }
+
+.bidask-label {
+  width: 32px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.bidask-price {
+  font-weight: 600;
+  min-width: 56px;
+}
+
+.bidask-vol {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.bidask-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  min-width: 100px;
+}
+
+.bidask-latest {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.bidask-limits {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Fund flow table */
+.fundflow-content {
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.fundflow-table th {
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.fundflow-table td {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+/* Detail main tabs - tighter for 6 items */
+.detail-main-tabs .tab {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .detail-position strong {

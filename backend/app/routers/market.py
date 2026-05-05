@@ -3,7 +3,9 @@ from fastapi import APIRouter, Query
 from app.services.market_data import (
     filter_low_price, get_stock_detail, get_stock_history,
     get_sector_list, get_sector_overview, compute_consecutive_days,
-    get_index_data,
+    get_index_data, get_financial_abstract, get_financial_statement,
+    get_stock_news, get_intraday, get_bid_ask, get_fund_flow,
+    get_minute_history,
 )
 
 router = APIRouter()
@@ -96,3 +98,38 @@ def history(
 @router.get("/indices")
 def indices():
     return get_index_data()
+
+
+@router.get("/financial/abstract/{code}")
+def financial_abstract(code: str):
+    return get_financial_abstract(code)
+
+
+@router.get("/financial/statement/{code}")
+def financial_statement(code: str, type: str = Query("利润表")):
+    return get_financial_statement(code, type)
+
+
+@router.get("/news/{code}")
+def stock_news(code: str):
+    return get_stock_news(code)
+
+
+@router.get("/intraday/{code}")
+def intraday(code: str):
+    return get_intraday(code)
+
+
+@router.get("/bidask/{code}")
+def bidask(code: str):
+    return get_bid_ask(code)
+
+
+@router.get("/fund-flow/{code}")
+def fund_flow(code: str):
+    return get_fund_flow(code)
+
+
+@router.get("/minute/{code}")
+def minute_history(code: str, period: str = Query("1")):
+    return get_minute_history(code, period)

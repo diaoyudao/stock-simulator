@@ -197,3 +197,33 @@
 ### Risks
 - 收益统计中盈亏比/胜率计算较简化（基于卖出记录）
 - 浏览器Notification需用户授权，当前仅用应用内通知
+
+## Session 11 — 2026-05-05
+
+### Done
+- 财务审计报表 + 资讯功能：
+  - 后端 `get_financial_abstract()` — 同花顺财务摘要，8期核心指标
+  - 后端 `get_financial_statement()` — 三大报表（利润表/资产负债表/现金流量表）
+  - 后端 `get_stock_news()` — 东方财富个股资讯（直接HTTP请求，stock_news_em broken）
+  - 前端详情页新增"财务报表"和"资讯"子Tab
+  - 错误/异常数据红色警告标识
+- P1 详情页增强功能（TDD + BDD）：
+  - t27: 分时图 — `get_intraday()` + SVG图表渲染
+  - t28: 五档盘口 — `get_bid_ask()` + 买卖盘3列布局
+  - t29: 资金流向 — `get_fund_flow()` + 表格（主力/超大单/大单/中单/小单）
+  - t30: 分钟K线 — `get_minute_history()` + lightweight-charts渲染
+- BDD测试：`backend/tests/features/detail_enhance.feature` + `test_detail_enhance_bdd.py`
+  - 9个场景覆盖正常/异常路径
+  - autouse `_clear_caches` fixture 防止缓存干扰
+- E2E验证：16/16 端点全部通过
+
+### Decisions
+- **AKShare v1.18.60** 作为新功能数据源（分时/盘口/资金流向/分钟K线/财务）
+- **TDD + BDD工作流**：先写 .feature 场景 → pytest-bdd 测试 → 开发实现
+- **分时图用SVG**：纯SVG渲染比引入chart库更轻量
+- **盘口10秒缓存**：盘口数据变化快，TTL短于其他接口
+- **资讯直接HTTP**：`stock_news_em` 当前版本JSON解析错误，自行实现东方财富搜索API
+
+### Risks
+- 东方财富搜索API依赖特定User-Agent/Referer，可能随版本变化
+- BDD测试使用mock，实际API响应格式变化不会被检测到

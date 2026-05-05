@@ -1,8 +1,18 @@
 import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import market, trade
+# 加载 .env 文件
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+from app.routers import market, trade, ai
 
 app = FastAPI(title="StockSimulator", version="0.1.0")
 
@@ -17,6 +27,7 @@ app.add_middleware(
 
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(trade.router, prefix="/api/trade", tags=["trade"])
+app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 
 
 @app.get("/health")

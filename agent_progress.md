@@ -249,3 +249,58 @@
 - 多股对比: 详情页"加对比"按钮 + ComparePanel浮动面板，对比8项核心指标
 - BDD测试: 7个场景全部通过（涨跌排行5个 + 龙虎榜2个）
 - E2E验证: 新端点 `/ranking` 和 `/lhb` 正常返回
+
+## Session 13 — 2026-05-05
+
+### Done — AI股票分析
+- 后端AI分析服务 `ai_analysis.py`: GLM API集成 + 规则评分引擎
+  - `get_ai_analysis(code)`: 聚合行情+K线+指标+财务+资金+新闻，构建prompt调用GLM API
+  - `get_ai_score(code)`: 技术面/基本面/资金面规则评分，即时返回
+  - 5分钟缓存（BoundedCache LRU），环境变量 `GLM_API_KEY`
+- 后端AI路由 `ai.py`: `GET /ai/analyze/{code}` + `GET /ai/score/{code}`
+- `main.py` 注册 `/api/ai` 路由
+- 前端AI分析Tab: 详情页第7个子Tab
+  - 评分面板：技术面/基本面/资金面进度条 + 综合评分
+  - AI分析报告：技术面/基本面/资金面/风险提示/综合评分
+  - 加载骨架屏 + 免责声明
+- `requirements.txt` 新增 `httpx`, `requests`
+
+### Done — Bug修复
+- t34: 交易竞态条件修复 — `asyncio.Lock` 保护 buy/sell/create_order
+- t34: 卖出委托创建时冻结持仓，取消时归还
+- t35: `get_performance_stats()` 修复 — 正确查询buy/sell关联、avg_cost、avg_holding_days
+- t36: 除零错误防护 — `avg_cost=0` 时盈亏显示0.0而非500错误
+
+### Done — 后端性能/代码质量
+- t37: `BoundedCache` 类（OrderedDict LRU，maxsize限制），替换10个无界缓存字典
+- t38: 输入校验 — `code` 正则/`sort_by` 白名单/`period` 白名单，无效返回422
+- t38: 业务错误返回HTTP 400（`HTTPException`），不再全部200
+- t38: 24个 `except Exception` 改为 `except Exception as e` + `logger.warning`
+- t38: `get_ranking()` 直接从缓存取数据，不再走完整筛选管线
+- t39: `requests` 加入 `requirements.txt`
+
+### Done — 前端重构/UX打磨
+- t40: App.tsx 从 ~1790 行降至 ~987 行（减少45%）
+  - 提取 `utils/format.ts`（fmtAmt/fmtCap/fmt 共享工具）
+  - 提取 `utils/shared.ts`（Toast/usePolling/TradingTimeContext）
+  - 提取 `components/StockDetail.tsx`（~700行独立组件）
+- t41: 交互优化
+  - Reset按钮增加确认弹窗
+  - TradeButton增加loading状态防重复提交
+  - NotificationBell点击外部关闭
+  - ComparePanel严格限制5只上限
+  - MarketTab空结果显示"暂无符合筛选条件的股票"
+  - api.ts 非2xx状态抛出错误
+- t42: Toast改为 Context + useReducer 模式，消除全局可变状态
+- t42: TradingTimeContext 增加 loading 状态字段
+
+### Decisions
+- **GLM API选择**: 智谱AI（glm-4-flash免费/glm-4-plus付费），中文能力强且便宜
+- **卖出委托冻结持仓**: 创建时扣除，成交时不重复扣除，取消时归还
+- **Toast Context模式**: 替代全局变量，React单向数据流，支持多个Toast Provider
+- **BoundedCache**: OrderedDict LRU比引入第三方库更轻量
+
+### Current State
+- 后端：30+ API端点（含AI分析2个），全部编译通过
+- 前端：组件拆分后App.tsx ~987行，TypeScript编译通过
+- AI分析需配置环境变量 `GLM_API_KEY` 才能使用LLM分析功能

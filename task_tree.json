@@ -749,6 +749,26 @@
           "completed_in": "session-11"
         }
       ]
+    },
+    {
+      "id": "g14",
+      "title": "AI股票分析 + Bug修复 + 性能优化 + UI打磨",
+      "state": "expanded",
+      "priority": 14,
+      "tasks": [
+        {"id": "t31", "title": "后端AI分析服务 — GLM API集成 + 规则评分", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t32", "title": "后端AI路由 + main.py注册", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t33", "title": "前端AI分析Tab — 评分+报告+免责", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t34", "title": "交易竞态条件修复 — Lock + 持仓冻结", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t35", "title": "性能统计计算修复 — get_performance_stats三个bug", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t36", "title": "除零错误防护 — avg_cost=0", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t37", "title": "有界缓存替代无界字典 — BoundedCache LRU", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t38", "title": "输入校验 + API一致性 + 日志", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t39", "title": "同步阻塞修复 + requirements.txt", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t40", "title": "组件拆分 — StockDetail子组件 + utils提取", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t41", "title": "交互优化 — loading/确认/防重复/空状态", "kanban": "done", "completed_in": "session-13"},
+        {"id": "t42", "title": "Toast/全局状态修复 — Context + useReducer", "kanban": "done", "completed_in": "session-13"}
+      ]
     }
   ],
   "discovered_tasks": [

@@ -3,3 +3,5 @@ uvicorn==0.34.2
 akshare==1.16.84
 pandas==2.2.3
 aiosqlite==0.21.0
+requests==2.32.3
+httpx==0.28.1

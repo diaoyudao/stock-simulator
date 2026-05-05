@@ -1619,3 +1619,134 @@ tr:nth-child(3) .rank-num { color: var(--rank-3); }
     width: 60px;
   }
 }
+
+/* ─── AI 分析 ─── */
+
+.ai-content {
+  padding: var(--space-md);
+}
+
+.ai-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 0;
+  color: var(--text-secondary);
+}
+
+.ai-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-scores {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ai-score-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-score-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 36px;
+}
+
+.ai-score-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ai-score-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.ai-score-value {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 24px;
+  text-align: right;
+}
+
+.ai-score-overall {
+  grid-column: 1 / -1;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.ai-score-overall .ai-score-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-score-total {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.ai-report {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ai-section h4 {
+  font-size: 13px;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+
+.ai-section p {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.ai-rating {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.ai-disclaimer {
+  margin-top: 20px;
+  padding: 8px 12px;
+  background: color-mix(in oklch, var(--warning) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--warning) 30%, transparent);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .ai-scores {
+    grid-template-columns: 1fr;
+  }
+}

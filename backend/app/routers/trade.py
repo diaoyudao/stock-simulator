@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from app.services.market_data import get_spot_data
@@ -14,6 +14,14 @@ from app.services.trading import (
 )
 
 router = APIRouter()
+
+def _check_error(result: dict):
+    """如果结果包含error，抛出HTTP 400。"""
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 
 # 2026年法定节假日（国务院办公厅公告）
 _HOLIDAYS_2026 = {
@@ -139,7 +147,7 @@ async def positions():
             pos["current_price"] = current_price
             pos["market_value"] = round(current_price * pos["quantity"], 2)
             pos["profit"] = round((current_price - pos["avg_cost"]) * pos["quantity"], 2)
-            pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2)
+            pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] > 0 else 0.0
     except Exception:
         for pos in positions:
             pos["current_price"] = pos["avg_cost"]
@@ -153,26 +161,28 @@ async def positions():
 async def buy(req: BuyRequest):
     ok, msg = _check_trading_time()
     if not ok:
-        return {"error": f"非交易时间（{msg}）"}
+        raise HTTPException(status_code=400, detail=f"非交易时间（{msg}）")
     price = req.price
     if price is None:
         price = await asyncio.to_thread(_get_price, req.code)
         if price is None:
-            return {"error": "股票代码不存在"}
-    return await buy_stock(req.code, req.name, req.quantity, price)
+            raise HTTPException(status_code=400, detail="股票代码不存在")
+    result = await buy_stock(req.code, req.name, req.quantity, price)
+    return _check_error(result)
 
 
 @router.post("/sell")
 async def sell(req: SellRequest):
     ok, msg = _check_trading_time()
     if not ok:
-        return {"error": f"非交易时间（{msg}）"}
+        raise HTTPException(status_code=400, detail=f"非交易时间（{msg}）")
     price = req.price
     if price is None:
         price = await asyncio.to_thread(_get_price, req.code)
         if price is None:
-            return {"error": "股票代码不存在"}
-    return await sell_stock(req.code, req.quantity, price)
+            raise HTTPException(status_code=400, detail="股票代码不存在")
+    result = await sell_stock(req.code, req.quantity, price)
+    return _check_error(result)
 
 
 @router.get("/transactions")
@@ -201,7 +211,7 @@ async def dashboard():
         pos["current_price"] = current_price
         pos["market_value"] = round(current_price * pos["quantity"], 2)
         pos["profit"] = round((current_price - pos["avg_cost"]) * pos["quantity"], 2)
-        pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2)
+        pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] > 0 else 0.0
 
     market_value = sum(
         price_map.get(p["code"], p["avg_cost"]) * p["quantity"]
@@ -358,8 +368,9 @@ async def alert_cancel(alert_id: int):
 async def create_limit_order(req: OrderRequest):
     ok, msg = _check_trading_time()
     if not ok:
-        return {"error": f"非交易时间（{msg}）"}
-    return await create_order(req.code, req.name, req.action, req.quantity, req.target_price)
+        raise HTTPException(status_code=400, detail=f"非交易时间（{msg}）")
+    result = await create_order(req.code, req.name, req.action, req.quantity, req.target_price)
+    return _check_error(result)
 
 
 @router.get("/orders")

@@ -1,9 +1,30 @@
 import time
+import logging
 import threading
 import numpy as np
 import akshare as ak
 from datetime import datetime, timedelta
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+logger = logging.getLogger(__name__)
+
+# ─── 有界缓存（LRU淘汰，防止内存泄漏） ───
+
+class BoundedCache(OrderedDict):
+    """基于 OrderedDict 的 LRU 缓存，最大容量限制，惰性淘汰过期条目。"""
+
+    def __init__(self, maxsize: int = 1024):
+        super().__init__()
+        self._maxsize = maxsize
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self._maxsize:
+            self.popitem(last=False)  # 淘汰最久未访问的
+
 
 # ─── 缓存配置 ───
 
@@ -19,7 +40,7 @@ _refreshing = False
 # 行业板块缓存（5分钟）
 _sector_list_cache: list[dict] = []
 _sector_list_cache_time = 0.0
-_sector_constituent_cache: dict[str, tuple[float, set[str]]] = {}  # sector_name -> (ts, codes)
+_sector_constituent_cache: BoundedCache = BoundedCache(256)  # sector_name -> (ts, codes)
 _sector_constituent_timeout = 300
 
 # 板块概览缓存（5分钟）
@@ -27,7 +48,7 @@ _sector_overview_cache: list[dict] = []
 _sector_overview_cache_time = 0.0
 
 # K线缓存（60秒）
-_kline_cache: dict[str, tuple[float, list[dict]]] = {}
+_kline_cache: BoundedCache = BoundedCache(512)
 _kline_cache_timeout = 60
 
 # 大盘指数缓存（60秒）
@@ -35,7 +56,7 @@ _index_cache: tuple[float, list[dict]] = (0.0, [])
 _index_cache_timeout = 60
 
 # 52周高低缓存（5分钟）
-_52week_cache: dict[str, tuple[float, float, float]] = {}  # code -> (ts, high, low)
+_52week_cache: BoundedCache = BoundedCache(1024)  # code -> (ts, high, low)
 _52week_cache_timeout = 300
 
 _executor = ThreadPoolExecutor(max_workers=8)
@@ -90,7 +111,8 @@ def _fetch_all_stocks() -> list[dict]:
         if df is None or df.empty:
             return []
         return _convert_ak_spot(df)
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
@@ -165,7 +187,8 @@ def _compute_52week(code: str) -> tuple[float, float]:
         low52 = float(df["最低"].min())
         _52week_cache[code] = (now, high52, low52)
         return high52, low52
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return 0.0, 0.0
 
 
@@ -349,7 +372,8 @@ def get_stock_detail(code: str) -> dict:
                 s["卖一"] = _safe_float(bidask.get("sell_1"), s["最新价"])
                 if "量比" in bidask:
                     s["量比"] = _safe_float(bidask["量比"])
-        except Exception:
+        except Exception as e:
+            logger.warning("API调用失败: %s", e)
             pass
 
         # 52周
@@ -404,7 +428,8 @@ def get_stock_detail(code: str) -> dict:
             "连跌天数": 0,
             "行业": info,
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return {}
 
 
@@ -415,7 +440,8 @@ def _fetch_stock_info(code: str) -> str:
         if df is not None and not df.empty:
             info = dict(zip(df["item"], df["value"]))
             return str(info.get("行业", ""))
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         pass
     return ""
 
@@ -451,7 +477,8 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
             })
         _kline_cache[cache_key] = (now, data)
         return data
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
@@ -501,7 +528,8 @@ def get_index_data() -> list[dict]:
         if result:
             _index_cache = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return cached or []
 
 
@@ -526,7 +554,8 @@ def _fetch_sector_list() -> list[dict]:
         _sector_list_cache = sectors
         _sector_list_cache_time = now
         return sectors
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
@@ -544,7 +573,8 @@ def _fetch_sector_constituents(sector_name: str) -> set[str]:
         codes = set(df["代码"].astype(str).tolist())
         _sector_constituent_cache[sector_name] = (now, codes)
         return codes
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return set()
 
 
@@ -584,16 +614,17 @@ def get_sector_overview() -> list[dict]:
         _sector_overview_cache = result
         _sector_overview_cache_time = now
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return _sector_overview_cache or []
 
 
 # ─── 财务数据 ───
 
-_financial_cache: dict[str, tuple[float, list[dict]]] = {}
+_financial_cache: BoundedCache = BoundedCache(256)
 _financial_cache_timeout = 300
 
-_statement_cache: dict[str, tuple[float, list[dict]]] = {}
+_statement_cache: BoundedCache = BoundedCache(256)
 _statement_cache_timeout = 300
 
 _VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
@@ -629,7 +660,8 @@ def get_financial_abstract(code: str) -> list[dict]:
         result.reverse()
         _financial_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
@@ -661,13 +693,14 @@ def get_financial_statement(code: str, statement_type: str) -> list[dict]:
             result.append(item)
         _statement_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
 # ─── 个股资讯 ───
 
-_news_cache: dict[str, tuple[float, list[dict]]] = {}
+_news_cache: BoundedCache = BoundedCache(256)
 _news_cache_timeout = 300
 
 
@@ -736,13 +769,14 @@ def get_stock_news(code: str) -> list[dict]:
                 })
         _news_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
 # ─── 分时图 ───
 
-_intraday_cache: dict[str, tuple[float, list[dict]]] = {}
+_intraday_cache: BoundedCache = BoundedCache(256)
 _intraday_cache_timeout = 60
 
 
@@ -768,13 +802,14 @@ def get_intraday(code: str) -> list[dict]:
             })
         _intraday_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
 # ─── 五档盘口 ───
 
-_bidask_cache: dict[str, tuple[float, dict]] = {}
+_bidask_cache: BoundedCache = BoundedCache(256)
 _bidask_cache_timeout = 10
 
 
@@ -805,13 +840,14 @@ def get_bid_ask(code: str) -> dict:
         result["limit_down"] = _safe_float(raw.get("跌停"))
         _bidask_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return {}
 
 
 # ─── 资金流向 ───
 
-_fund_flow_cache: dict[str, tuple[float, list[dict]]] = {}
+_fund_flow_cache: BoundedCache = BoundedCache(256)
 _fund_flow_cache_timeout = 300
 
 
@@ -853,13 +889,14 @@ def get_fund_flow(code: str) -> list[dict]:
         result.reverse()
         _fund_flow_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
 # ─── 分钟K线 ───
 
-_minute_cache: dict[str, tuple[float, list[dict]]] = {}
+_minute_cache: BoundedCache = BoundedCache(512)
 _minute_cache_timeout = 60
 
 
@@ -888,7 +925,8 @@ def get_minute_history(code: str, period: str = "1") -> list[dict]:
             })
         _minute_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []
 
 
@@ -896,19 +934,18 @@ def get_minute_history(code: str, period: str = "1") -> list[dict]:
 
 def get_ranking(sort_by: str = "涨跌幅", order: str = "desc", limit: int = 50) -> list[dict]:
     """从已有行情缓存中提取排行榜。sort_by: 涨跌幅/换手率/成交额/量比, order: desc/asc"""
-    all_stocks = filter_low_price(page=1, page_size=9999)
-    items = all_stocks.get("items", [])
-    if not items:
+    stocks = get_spot_data()
+    if not stocks:
         return []
     reverse = order == "desc"
-    valid = [s for s in items if s.get(sort_by) is not None]
+    valid = [s for s in stocks if s.get(sort_by) is not None]
     valid.sort(key=lambda s: s[sort_by], reverse=reverse)
     return valid[:limit]
 
 
 # ─── 龙虎榜 ───
 
-_lhb_cache: dict[str, tuple[float, list[dict]]] = {}
+_lhb_cache: BoundedCache = BoundedCache(16)
 _lhb_cache_timeout = 300
 
 
@@ -948,5 +985,6 @@ def get_lhb(days: int = 5) -> list[dict]:
             result.append(item)
         _lhb_cache[cache_key] = (now, result)
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("API调用失败: %s", e)
         return []

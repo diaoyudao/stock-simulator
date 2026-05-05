@@ -1,3 +1,4 @@
+import asyncio
 import aiosqlite
 import time
 from pathlib import Path
@@ -8,6 +9,9 @@ INITIAL_CASH = 100000.0
 # 全局共享连接，避免每次请求都新建连接和建表
 _db: aiosqlite.Connection | None = None
 _tables_ready = False
+
+# 交易锁 — 防止并发买卖导致竞态条件
+_trade_lock = asyncio.Lock()
 
 
 async def _get_db() -> aiosqlite.Connection:
@@ -146,34 +150,36 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
         return {"error": "买入数量必须为100的整数倍"}
     amount = quantity * price
 
-    db = await _get_db()
-    cur = await db.execute("SELECT cash FROM account WHERE id = 1")
-    row = await cur.fetchone()
-    if row["cash"] < amount:
-        return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
+    async with _trade_lock:
+        db = await _get_db()
+        cur = await db.execute("SELECT cash FROM account WHERE id = 1")
+        row = await cur.fetchone()
+        if row["cash"] < amount:
+            return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
 
-    await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
+        await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
 
-    cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
-    pos = await cur.fetchone()
-    if pos:
-        total_qty = pos["quantity"] + quantity
-        new_avg = (pos["quantity"] * pos["avg_cost"] + quantity * price) / total_qty
+        cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
+        pos = await cur.fetchone()
+        if pos:
+            total_qty = pos["quantity"] + quantity
+            new_avg = (pos["quantity"] * pos["avg_cost"] + quantity * price) / total_qty
+            await db.execute(
+                "UPDATE positions SET quantity = ?, avg_cost = ?, name = ? WHERE code = ?",
+                (total_qty, new_avg, name, code),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
+                (code, name, quantity, price),
+            )
+
         await db.execute(
-            "UPDATE positions SET quantity = ?, avg_cost = ?, name = ? WHERE code = ?",
-            (total_qty, new_avg, name, code),
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'buy', ?, ?, ?, ?)",
+            (code, name, quantity, price, amount, time.time()),
         )
-    else:
-        await db.execute(
-            "INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
-            (code, name, quantity, price),
-        )
+        await db.commit()
 
-    await db.execute(
-        "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'buy', ?, ?, ?, ?)",
-        (code, name, quantity, price, amount, time.time()),
-    )
-    await db.commit()
     return {"success": True, "action": "buy", "code": code, "quantity": quantity, "price": price, "amount": amount}
 
 
@@ -183,27 +189,29 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
         return {"error": "卖出数量必须为100的整数倍"}
     amount = quantity * price
 
-    db = await _get_db()
-    cur = await db.execute("SELECT quantity, avg_cost, name FROM positions WHERE code = ?", (code,))
-    pos = await cur.fetchone()
-    if not pos or pos["quantity"] < quantity:
-        available = pos["quantity"] if pos else 0
-        return {"error": f"持仓不足，可用 {available} 股"}
+    async with _trade_lock:
+        db = await _get_db()
+        cur = await db.execute("SELECT quantity, avg_cost, name FROM positions WHERE code = ?", (code,))
+        pos = await cur.fetchone()
+        if not pos or pos["quantity"] < quantity:
+            available = pos["quantity"] if pos else 0
+            return {"error": f"持仓不足，可用 {available} 股"}
 
-    await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
 
-    new_qty = pos["quantity"] - quantity
-    if new_qty == 0:
-        await db.execute("DELETE FROM positions WHERE code = ?", (code,))
-    else:
-        await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
+        new_qty = pos["quantity"] - quantity
+        if new_qty == 0:
+            await db.execute("DELETE FROM positions WHERE code = ?", (code,))
+        else:
+            await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
 
-    profit = (price - pos["avg_cost"]) * quantity
-    await db.execute(
-        "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'sell', ?, ?, ?, ?)",
-        (code, pos["name"], quantity, price, amount, time.time()),
-    )
-    await db.commit()
+        profit = (price - pos["avg_cost"]) * quantity
+        await db.execute(
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'sell', ?, ?, ?, ?)",
+            (code, pos["name"], quantity, price, amount, time.time()),
+        )
+        await db.commit()
+
     return {"success": True, "action": "sell", "code": code, "quantity": quantity, "price": price, "amount": amount, "profit": profit}
 
 
@@ -254,26 +262,35 @@ async def create_order(code: str, name: str, action: str, quantity: int, target_
     if action not in ("buy", "sell"):
         return {"error": "操作类型无效"}
 
-    db = await _get_db()
-    if action == "buy":
-        amount = quantity * target_price
-        cur = await db.execute("SELECT cash FROM account WHERE id = 1")
-        row = await cur.fetchone()
-        if row["cash"] < amount:
-            return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
-        await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
-    else:
-        cur = await db.execute("SELECT quantity FROM positions WHERE code = ?", (code,))
-        pos = await cur.fetchone()
-        available = pos["quantity"] if pos else 0
-        if available < quantity:
-            return {"error": f"持仓不足，可用 {available} 股"}
+    async with _trade_lock:
+        db = await _get_db()
+        if action == "buy":
+            amount = quantity * target_price
+            cur = await db.execute("SELECT cash FROM account WHERE id = 1")
+            row = await cur.fetchone()
+            if row["cash"] < amount:
+                return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
+            await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
+        else:
+            # 卖出委托：冻结持仓，防止同时直接卖出
+            cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
+            pos = await cur.fetchone()
+            available = pos["quantity"] if pos else 0
+            if available < quantity:
+                return {"error": f"持仓不足，可用 {available} 股"}
+            # 冻结：从持仓中扣除
+            new_qty = available - quantity
+            if new_qty == 0:
+                await db.execute("DELETE FROM positions WHERE code = ?", (code,))
+            else:
+                await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
 
-    await db.execute(
-        "INSERT INTO pending_orders (code, name, action, quantity, target_price, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-        (code, name, action, quantity, target_price, time.time()),
-    )
-    await db.commit()
+        await db.execute(
+            "INSERT INTO pending_orders (code, name, action, quantity, target_price, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (code, name, action, quantity, target_price, time.time()),
+        )
+        await db.commit()
+
     return {"success": True, "action": action, "code": code, "quantity": quantity, "target_price": target_price}
 
 
@@ -287,54 +304,69 @@ async def get_orders(status: str | None = None) -> list[dict]:
 
 
 async def cancel_order(order_id: int) -> dict:
-    db = await _get_db()
-    cur = await db.execute("SELECT * FROM pending_orders WHERE id = ? AND status = 'pending'", (order_id,))
-    order = await cur.fetchone()
-    if not order:
-        return {"error": "委托单不存在或已处理"}
+    async with _trade_lock:
+        db = await _get_db()
+        cur = await db.execute("SELECT * FROM pending_orders WHERE id = ? AND status = 'pending'", (order_id,))
+        order = await cur.fetchone()
+        if not order:
+            return {"error": "委托单不存在或已处理"}
 
-    if order["action"] == "buy":
-        amount = order["quantity"] * order["target_price"]
-        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+        if order["action"] == "buy":
+            amount = order["quantity"] * order["target_price"]
+            await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+        else:
+            # 卖出委托取消：归还冻结的持仓
+            cur2 = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (order["code"],))
+            pos = await cur2.fetchone()
+            if pos:
+                total_qty = pos["quantity"] + order["quantity"]
+                new_avg = (pos["quantity"] * pos["avg_cost"] + order["quantity"] * order["target_price"]) / total_qty
+                await db.execute("UPDATE positions SET quantity = ?, avg_cost = ? WHERE code = ?", (total_qty, new_avg, order["code"]))
+            else:
+                await db.execute(
+                    "INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
+                    (order["code"], order["name"], order["quantity"], order["target_price"]),
+                )
 
-    await db.execute("UPDATE pending_orders SET status = 'cancelled' WHERE id = ?", (order_id,))
-    await db.commit()
+        await db.execute("UPDATE pending_orders SET status = 'cancelled' WHERE id = ?", (order_id,))
+        await db.commit()
+
     return {"success": True}
 
 
 async def check_and_fill_orders(price_map: dict[str, float]) -> list[dict]:
     """检查并执行满足条件的委托单。由行情刷新时调用。"""
-    db = await _get_db()
-    cur = await db.execute("SELECT * FROM pending_orders WHERE status = 'pending'")
-    orders = await cur.fetchall()
+    async with _trade_lock:
+        db = await _get_db()
+        cur = await db.execute("SELECT * FROM pending_orders WHERE status = 'pending'")
+        orders = await cur.fetchall()
 
-    if not orders:
-        return []
+        if not orders:
+            return []
 
-    filled = []
-    for order in orders:
-        code = order["code"]
-        current_price = price_map.get(code)
-        if current_price is None:
-            continue
+        filled = []
+        for order in orders:
+            code = order["code"]
+            current_price = price_map.get(code)
+            if current_price is None:
+                continue
 
-        should_fill = False
-        if order["action"] == "buy" and current_price <= order["target_price"]:
-            should_fill = True
-        elif order["action"] == "sell" and current_price >= order["target_price"]:
-            should_fill = True
+            should_fill = False
+            if order["action"] == "buy" and current_price <= order["target_price"]:
+                should_fill = True
+            elif order["action"] == "sell" and current_price >= order["target_price"]:
+                should_fill = True
 
-        if should_fill:
-            result = await _fill_order(order, current_price)
-            if result.get("success"):
-                filled.append(result)
+            if should_fill:
+                result = await _fill_order(db, order, current_price)
+                if result.get("success"):
+                    filled.append(result)
 
-    return filled
+        return filled
 
 
-async def _fill_order(order: aiosqlite.Row, fill_price: float) -> dict:
-    """执行委托单成交。"""
-    db = await _get_db()
+async def _fill_order(db: aiosqlite.Connection, order: aiosqlite.Row, fill_price: float) -> dict:
+    """执行委托单成交。调用方已持有 _trade_lock。"""
     # 再次确认状态
     cur = await db.execute("SELECT status FROM pending_orders WHERE id = ?", (order["id"],))
     row = await cur.fetchone()
@@ -359,18 +391,9 @@ async def _fill_order(order: aiosqlite.Row, fill_price: float) -> dict:
             await db.execute("INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
                              (order["code"], order["name"], order["quantity"], fill_price))
 
-    else:  # sell
+    else:  # sell — 持仓已在 create_order 时冻结，只需加钱
         amount = order["quantity"] * fill_price
         await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
-
-        cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (order["code"],))
-        pos = await cur.fetchone()
-        if pos:
-            new_qty = pos["quantity"] - order["quantity"]
-            if new_qty == 0:
-                await db.execute("DELETE FROM positions WHERE code = ?", (order["code"],))
-            else:
-                await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, order["code"]))
 
     amount = order["quantity"] * fill_price
     await db.execute(
@@ -464,28 +487,44 @@ async def get_performance_stats() -> dict:
         if dd > max_drawdown:
             max_drawdown = dd
 
-    cur2 = await db.execute("SELECT action, quantity, price, amount FROM transactions WHERE action = 'sell' ORDER BY created_at")
-    sells = await cur2.fetchall()
+    # 修复：正确计算胜率/盈亏比/持仓天数
+    # 查询所有卖出交易（含 code 和 created_at）
+    cur2 = await db.execute("SELECT code, quantity, price, created_at FROM transactions WHERE action = 'sell' ORDER BY created_at")
+    sells = [dict(r) for r in await cur2.fetchall()]
 
-    wins = 0
-    total_wins = 0
-    total_losses = 0
-    for s in sells:
+    if sells:
+        # 查询每只股票的买入均价和首次买入时间
         cur3 = await db.execute(
-            "SELECT avg_cost FROM positions WHERE code = (SELECT code FROM transactions WHERE id = ?)",
-            (s[0] if False else 0,),
+            "SELECT code, AVG(price) as avg_price, MIN(created_at) as first_buy FROM transactions WHERE action = 'buy' GROUP BY code"
         )
-        profit = s["price"] - s.get("avg_cost", s["price"])
-        if profit > 0:
-            wins += 1
-            total_wins += profit * s["quantity"]
-        else:
-            total_losses += abs(profit * s["quantity"])
+        buy_stats = {r["code"]: {"avg_price": r["avg_price"], "first_buy": r["first_buy"]} for r in await cur3.fetchall()}
 
-    win_rate = wins / len(sells) * 100 if sells else 0
-    profit_loss_ratio = total_wins / total_losses if total_losses > 0 else 0
+        wins = 0
+        total_wins = 0.0
+        total_losses = 0.0
+        total_holding_days = 0.0
 
-    avg_holding_days = days_held / len(sells) if sells else 0
+        for s in sells:
+            stats = buy_stats.get(s["code"])
+            avg_buy_price = stats["avg_price"] if stats else s["price"]
+            profit = (s["price"] - avg_buy_price) * s["quantity"]
+            if profit > 0:
+                wins += 1
+                total_wins += profit
+            else:
+                total_losses += abs(profit)
+
+            if stats and stats["first_buy"]:
+                days = (s["created_at"] - stats["first_buy"]) / 86400
+                total_holding_days += max(days, 0)
+
+        win_rate = wins / len(sells) * 100
+        profit_loss_ratio = total_wins / total_losses if total_losses > 0 else 0
+        avg_holding_days = total_holding_days / len(sells)
+    else:
+        win_rate = 0
+        profit_loss_ratio = 0
+        avg_holding_days = 0
 
     return {
         "total_return": round(total_return, 2),

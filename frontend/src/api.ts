@@ -24,7 +24,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const fetchPromise = (async () => {
     const res = await fetch(`${BASE}${path}`, init);
     const data = await res.json();
-    if (key && res.ok) {
+    if (!res.ok) {
+      throw { status: res.status, detail: data.detail || data.error || `请求失败(${res.status})` };
+    }
+    if (key) {
       // 缓存上限：淘汰最旧条目
       if (_cache.size >= MAX_CACHE_SIZE) {
         const oldest = _cache.keys().next().value;
@@ -273,6 +276,32 @@ export interface LhbItem {
   上榜原因: string;
 }
 
+export interface AIAnalysis {
+  code: string;
+  analysis: {
+    technical: string;
+    fundamental: string;
+    capital: string;
+    risk: string;
+    score: number;
+  };
+  disclaimer: string;
+  error?: string;
+}
+
+export interface AIScore {
+  code: string;
+  name: string;
+  scores: {
+    technical: number;
+    fundamental: number;
+    capital: number;
+    overall: number;
+  };
+  disclaimer: string;
+  error?: string;
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -425,4 +454,8 @@ export const api = {
     request<StockItem[]>(`/market/ranking?sort_by=${encodeURIComponent(sortBy)}&order=${order}&limit=${limit}`),
   getLhb: (days: number = 5) =>
     request<LhbItem[]>(`/market/lhb?days=${days}`),
+  getAIAnalysis: (code: string) =>
+    request<AIAnalysis>(`/ai/analyze/${code}`),
+  getAIScore: (code: string) =>
+    request<AIScore>(`/ai/score/${code}`),
 };

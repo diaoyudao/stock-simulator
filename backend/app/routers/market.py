@@ -1,4 +1,3 @@
-import re
 from fastapi import APIRouter, Query, HTTPException
 
 from app.services.market_data import (
@@ -8,10 +7,10 @@ from app.services.market_data import (
     get_stock_news, get_intraday, get_bid_ask, get_fund_flow,
     get_minute_history, get_ranking, get_lhb,
 )
+from app.utils import validate_code
 
 router = APIRouter()
 
-_CODE_PATTERN = re.compile(r"^[shsz]?\d{6}$")
 _VALID_SORT_FIELDS = {
     "涨跌幅", "涨跌额", "最新价", "今开", "最高", "最低", "昨收",
     "成交量", "成交额", "换手率", "市盈率-动态", "市净率", "总市值", "流通市值", "量比",
@@ -19,11 +18,6 @@ _VALID_SORT_FIELDS = {
 _VALID_PERIODS = {"daily", "weekly", "monthly"}
 _VALID_MINUTE_PERIODS = {"1", "5", "15", "30", "60"}
 _VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
-
-
-def _validate_code(code: str) -> None:
-    if not _CODE_PATTERN.match(code):
-        raise HTTPException(status_code=422, detail=f"无效的股票代码: {code}")
 
 
 @router.get("/spot")
@@ -92,13 +86,13 @@ def sector_overview():
 
 @router.get("/consecutive/{code}")
 def consecutive(code: str):
-    _validate_code(code)
+    validate_code(code)
     return compute_consecutive_days(code)
 
 
 @router.get("/detail/{code}")
 def detail(code: str):
-    _validate_code(code)
+    validate_code(code)
     data = get_stock_detail(code)
     if not data:
         raise HTTPException(status_code=404, detail="股票不存在")
@@ -111,7 +105,7 @@ def history(
     period: str = Query("daily"),
     start_date: str = Query("20250101"),
 ):
-    _validate_code(code)
+    validate_code(code)
     if period not in _VALID_PERIODS:
         raise HTTPException(status_code=422, detail=f"无效的K线周期: {period}")
     return get_stock_history(code, period=period, start_date=start_date)
@@ -124,13 +118,13 @@ def indices():
 
 @router.get("/financial/abstract/{code}")
 def financial_abstract(code: str):
-    _validate_code(code)
+    validate_code(code)
     return get_financial_abstract(code)
 
 
 @router.get("/financial/statement/{code}")
 def financial_statement(code: str, type: str = Query("利润表")):
-    _validate_code(code)
+    validate_code(code)
     if type not in _VALID_STATEMENTS:
         raise HTTPException(status_code=422, detail=f"无效的报表类型: {type}")
     return get_financial_statement(code, type)
@@ -138,31 +132,31 @@ def financial_statement(code: str, type: str = Query("利润表")):
 
 @router.get("/news/{code}")
 def stock_news(code: str):
-    _validate_code(code)
+    validate_code(code)
     return get_stock_news(code)
 
 
 @router.get("/intraday/{code}")
 def intraday(code: str):
-    _validate_code(code)
+    validate_code(code)
     return get_intraday(code)
 
 
 @router.get("/bidask/{code}")
 def bidask(code: str):
-    _validate_code(code)
+    validate_code(code)
     return get_bid_ask(code)
 
 
 @router.get("/fund-flow/{code}")
 def fund_flow(code: str):
-    _validate_code(code)
+    validate_code(code)
     return get_fund_flow(code)
 
 
 @router.get("/minute/{code}")
 def minute_history(code: str, period: str = Query("1")):
-    _validate_code(code)
+    validate_code(code)
     if period not in _VALID_MINUTE_PERIODS:
         raise HTTPException(status_code=422, detail=f"无效的分钟周期: {period}")
     return get_minute_history(code, period)

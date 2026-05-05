@@ -62,6 +62,7 @@ async def _ensure_tables(db: aiosqlite.Connection):
             action TEXT NOT NULL CHECK(action IN ('buy', 'sell')),
             quantity INTEGER NOT NULL,
             target_price REAL NOT NULL,
+            avg_cost REAL NOT NULL DEFAULT 0.0,
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'filled', 'cancelled')),
             created_at REAL NOT NULL,
             filled_at REAL,
@@ -278,6 +279,8 @@ async def create_order(code: str, name: str, action: str, quantity: int, target_
             available = pos["quantity"] if pos else 0
             if available < quantity:
                 return {"error": f"持仓不足，可用 {available} 股"}
+            # 记录冻结时的原始成本价
+            frozen_avg_cost = pos["avg_cost"] if pos else 0.0
             # 冻结：从持仓中扣除
             new_qty = available - quantity
             if new_qty == 0:
@@ -286,8 +289,8 @@ async def create_order(code: str, name: str, action: str, quantity: int, target_
                 await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
 
         await db.execute(
-            "INSERT INTO pending_orders (code, name, action, quantity, target_price, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-            (code, name, action, quantity, target_price, time.time()),
+            "INSERT INTO pending_orders (code, name, action, quantity, target_price, avg_cost, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (code, name, action, quantity, target_price, frozen_avg_cost if action == "sell" else 0.0, time.time()),
         )
         await db.commit()
 
@@ -315,17 +318,18 @@ async def cancel_order(order_id: int) -> dict:
             amount = order["quantity"] * order["target_price"]
             await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
         else:
-            # 卖出委托取消：归还冻结的持仓
+            # 卖出委托取消：归还冻结的持仓（使用冻结时记录的原始成本价）
+            original_avg_cost = order["avg_cost"] or order["target_price"]
             cur2 = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (order["code"],))
             pos = await cur2.fetchone()
             if pos:
                 total_qty = pos["quantity"] + order["quantity"]
-                new_avg = (pos["quantity"] * pos["avg_cost"] + order["quantity"] * order["target_price"]) / total_qty
+                new_avg = (pos["quantity"] * pos["avg_cost"] + order["quantity"] * original_avg_cost) / total_qty
                 await db.execute("UPDATE positions SET quantity = ?, avg_cost = ? WHERE code = ?", (total_qty, new_avg, order["code"]))
             else:
                 await db.execute(
                     "INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
-                    (order["code"], order["name"], order["quantity"], order["target_price"]),
+                    (order["code"], order["name"], order["quantity"], original_avg_cost),
                 )
 
         await db.execute("UPDATE pending_orders SET status = 'cancelled' WHERE id = ?", (order_id,))

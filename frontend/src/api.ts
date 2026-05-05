@@ -298,6 +298,23 @@ export interface AIScore {
     capital: number;
     overall: number;
   };
+  capital_detail?: {
+    date: string;
+    main_net: number;
+    main_pct: number;
+    huge_net: number;
+    huge_pct: number;
+    big_net: number;
+    big_pct: number;
+    mid_net: number;
+    mid_pct: number;
+    small_net: number;
+    small_pct: number;
+    retail_net: number;
+    retail_pct: number;
+    main_buy_ratio: number;
+    retail_buy_ratio: number;
+  };
   disclaimer: string;
   error?: string;
 }

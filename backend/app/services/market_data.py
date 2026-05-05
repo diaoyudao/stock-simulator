@@ -203,7 +203,8 @@ def _enrich_with_52week(stocks: list[dict], limit: int = 500) -> None:
         code = futures[future]
         try:
             results[code] = future.result()
-        except Exception:
+        except Exception as e:
+            logger.warning("52周数据获取失败 %s: %s", code, e)
             results[code] = (0.0, 0.0)
     for s in stocks:
         high, low = results.get(s["代码"], (0.0, 0.0))

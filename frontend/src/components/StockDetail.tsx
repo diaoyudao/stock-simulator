@@ -177,12 +177,13 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   useEffect(() => {
     if (detailTab !== "ai" || !code) return;
     setAiLoading(true);
-    Promise.all([api.getAIScore(code), api.getAIAnalysis(code)])
-      .then(([score, analysis]) => {
+    Promise.allSettled([api.getAIScore(code), api.getAIAnalysis(code)])
+      .then(([scoreRes, analysisRes]) => {
+        const score = scoreRes.status === "fulfilled" ? scoreRes.value : null;
+        const analysis = analysisRes.status === "fulfilled" ? analysisRes.value : null;
         setAiScore(score && !score.error ? score : null);
         setAiAnalysis(analysis && !analysis.error ? analysis : null);
       })
-      .catch(() => { setAiScore(null); setAiAnalysis(null); })
       .finally(() => setAiLoading(false));
   }, [code, detailTab]);
 
@@ -644,6 +645,61 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
                       <span className="ai-score-label">综合</span>
                       <span className="ai-score-total">{aiScore.scores.overall}</span>
                     </div>
+                    {aiScore.capital_detail && (
+                      <div className="ai-capital-detail">
+                        <div className="ai-capital-date">{aiScore.capital_detail.date} 资金流向</div>
+                        <div className="ai-capital-row ai-capital-main">
+                          <span className="ai-capital-label">主力</span>
+                          <div className="ai-capital-ratio">
+                            <div className="ai-ratio-bar">
+                              <div className="ai-ratio-buy" style={{ width: `${aiScore.capital_detail.main_buy_ratio}%` }} />
+                            </div>
+                            <span className="ai-ratio-text">{aiScore.capital_detail.main_buy_ratio}% 买</span>
+                          </div>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.main_net >= 0 ? "profit" : "loss"}`}>
+                            {aiScore.capital_detail.main_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.main_net)}
+                          </span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.main_pct >= 0 ? "profit" : "loss"}`}>
+                            {aiScore.capital_detail.main_pct >= 0 ? "+" : ""}{aiScore.capital_detail.main_pct.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="ai-capital-sub">
+                          <span className="ai-capital-label-sm">超大单</span>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.huge_net >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.huge_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.huge_net)}</span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.huge_pct >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.huge_pct >= 0 ? "+" : ""}{aiScore.capital_detail.huge_pct.toFixed(2)}%</span>
+                        </div>
+                        <div className="ai-capital-sub">
+                          <span className="ai-capital-label-sm">大单</span>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.big_net >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.big_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.big_net)}</span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.big_pct >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.big_pct >= 0 ? "+" : ""}{aiScore.capital_detail.big_pct.toFixed(2)}%</span>
+                        </div>
+                        <div className="ai-capital-row ai-capital-retail">
+                          <span className="ai-capital-label">散户</span>
+                          <div className="ai-capital-ratio">
+                            <div className="ai-ratio-bar">
+                              <div className="ai-ratio-buy" style={{ width: `${aiScore.capital_detail.retail_buy_ratio}%` }} />
+                            </div>
+                            <span className="ai-ratio-text">{aiScore.capital_detail.retail_buy_ratio}% 买</span>
+                          </div>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.retail_net >= 0 ? "profit" : "loss"}`}>
+                            {aiScore.capital_detail.retail_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.retail_net)}
+                          </span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.retail_pct >= 0 ? "profit" : "loss"}`}>
+                            {aiScore.capital_detail.retail_pct >= 0 ? "+" : ""}{aiScore.capital_detail.retail_pct.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="ai-capital-sub">
+                          <span className="ai-capital-label-sm">中单</span>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.mid_net >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.mid_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.mid_net)}</span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.mid_pct >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.mid_pct >= 0 ? "+" : ""}{aiScore.capital_detail.mid_pct.toFixed(2)}%</span>
+                        </div>
+                        <div className="ai-capital-sub">
+                          <span className="ai-capital-label-sm">小单</span>
+                          <span className={`ai-capital-net ${aiScore.capital_detail.small_net >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.small_net >= 0 ? "+" : ""}{fmtAmt(aiScore.capital_detail.small_net)}</span>
+                          <span className={`ai-capital-pct ${aiScore.capital_detail.small_pct >= 0 ? "profit" : "loss"}`}>{aiScore.capital_detail.small_pct >= 0 ? "+" : ""}{aiScore.capital_detail.small_pct.toFixed(2)}%</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
                 {aiAnalysis?.analysis && (

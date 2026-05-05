@@ -615,7 +615,7 @@ def get_financial_abstract(code: str) -> list[dict]:
         df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
         if df is None or df.empty:
             return []
-        df = df.head(8)
+        df = df.tail(8)
         result = []
         for _, row in df.iterrows():
             item = {}
@@ -626,6 +626,7 @@ def get_financial_abstract(code: str) -> list[dict]:
                 else:
                     item[col] = str(val)
             result.append(item)
+        result.reverse()
         _financial_cache[cache_key] = (now, result)
         return result
     except Exception:
@@ -849,6 +850,7 @@ def get_fund_flow(code: str) -> list[dict]:
                 "small_net": _safe_float(row.iloc[11]),
                 "small_pct": _safe_float(row.iloc[12]),
             })
+        result.reverse()
         _fund_flow_cache[cache_key] = (now, result)
         return result
     except Exception:

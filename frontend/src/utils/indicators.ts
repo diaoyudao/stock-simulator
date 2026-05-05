@@ -58,29 +58,6 @@ function ema(values: number[], period: number): (number | null)[] {
   return result;
 }
 
-function sma(values: (number | null)[], period: number): (number | null)[] {
-  const result: (number | null)[] = new Array(values.length).fill(null);
-  let sum = 0;
-  let count = 0;
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (v === null) continue;
-    sum += v;
-    count++;
-    if (i >= period) {
-      const old = values[i - period];
-      if (old !== null) {
-        sum -= old;
-        count--;
-      }
-    }
-    if (count >= period) {
-      result[i] = sum / count;
-    }
-  }
-  return result;
-}
-
 // ─── MA 均线 ───
 
 export function calcMA(candles: CandleData[], period: number): LinePoint[] {

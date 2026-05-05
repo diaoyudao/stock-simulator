@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type LhbItem } from "./api";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
-import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
+import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData } from "./utils/indicators";
 import "./App.css";
 
 type Tab = "market" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
@@ -337,7 +337,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
   const fetchStocks = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.getSpot(buildParams());
+      const res = await api.getSpot(buildParams() as Record<string, string | number>);
       setStocks(res.items);
       setTotal(res.total);
     } finally {
@@ -437,7 +437,7 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
   const [action, setAction] = useState<"buy" | "sell">("buy");
 
   const execute = async () => {
-    const fn = action === "buy" ? api.buy : api.sell;
+    const fn = action === "buy" ? api.buy : api.sell as any;
     await fn(code, name, qty);
     setOpen(false);
     setQty(100);
@@ -495,7 +495,6 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
 }
 
 function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string) => void; onTrade: () => void }) {
-  const { isTradingTime } = useTradingTime();
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [groups, setGroups] = useState<WatchlistGroup[]>([]);
   const [activeGroup, setActiveGroup] = useState<number>(0); // 0 = all
@@ -779,7 +778,7 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
   );
 }
 
-function OrdersTab({ onTrade }: { onTrade: () => void }) {
+function OrdersTab({ onTrade: _onTrade }: { onTrade: () => void }) {
   const [orders, setOrders] = useState<PendingOrder[]>([]);
   const [statusFilter, setStatusFilter] = useState("pending");
 
@@ -795,7 +794,7 @@ function OrdersTab({ onTrade }: { onTrade: () => void }) {
   useEffect(() => { load(); }, [load]);
 
   const handleCancel = async (id: number) => {
-    const res = await api.cancelOrder(id);
+    const res = await api.cancelOrder(id) as any;
     if (res.success) load();
     else alert(res.error);
   };
@@ -1094,7 +1093,6 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
     }
 
     const hasSubChart = indicators.subChart !== "none";
-    const mainHeight = hasSubChart ? 240 : 320;
     const totalHeight = hasSubChart ? 420 : 320;
 
     const raf = requestAnimationFrame(() => {
@@ -1305,13 +1303,13 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
 
   const executeTrade = async () => {
     if (tradeMode === "limit") {
-      const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice);
+      const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice) as any;
       if (res.error) { alert(res.error); return; }
     } else if (tradeAction === "buy") {
-      const res = await api.buy(code, detail["名称"], tradeQty);
+      const res = await api.buy(code, detail["名称"], tradeQty) as any;
       if (res.error) { alert(res.error); return; }
     } else {
-      const res = await api.sell(code, tradeQty);
+      const res = await api.sell(code, tradeQty) as any;
       if (res.error) { alert(res.error); return; }
     }
     setTradeQty(100);
@@ -1341,7 +1339,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
           </select>
           <input type="number" value={alertValue} step={0.01} onChange={(e) => setAlertValue(Number(e.target.value))} />
           <button onClick={async () => {
-            const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue);
+            const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue) as any;
             if (res.success) { setShowAlert(false); alert("提醒已设置"); }
             else alert(res.error);
           }}>确认</button>
@@ -1507,7 +1505,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
                   svg += `<line x1="${pad.l}" y1="${baseY}" x2="${w-pad.r}" y2="${baseY}" stroke="#8b949e" stroke-dasharray="3,3" stroke-width="0.5"/>`;
                 }
                 // Price line
-                const pts = entries.map(([t, v], i) => {
+                const pts = entries.map(([_t, v], i) => {
                   const x = pad.l + (cw / Math.max(entries.length - 1, 1)) * i;
                   const y = pad.t + ch * (1 - (v.price - minP) / range);
                   return `${x},${y}`;

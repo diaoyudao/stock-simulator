@@ -12,6 +12,64 @@ function toast(msg: string) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => _toastSet?.(""), 1500);
 }
+
+// 可搜索下拉组件
+function SearchSelect({ value, onChange, options, placeholder }: {
+  value: string;
+  onChange: (val: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = search
+    ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()) || o.value.toLowerCase().includes(search.toLowerCase()))
+    : options;
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div className="search-select" ref={ref}>
+      <button className="search-select-trigger" onClick={() => { setOpen(!open); setSearch(""); }}>
+        {selected?.label || placeholder || "请选择"}
+        <span className="search-select-arrow">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="search-select-dropdown">
+          <input
+            className="search-select-input"
+            autoFocus
+            placeholder="搜索..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="search-select-list">
+            <button className={`search-select-option${!value ? " active" : ""}`} onClick={() => { onChange(""); setOpen(false); }}>
+              {placeholder || "全部"}
+            </button>
+            {filtered.map((o) => (
+              <button key={o.value} className={`search-select-option${o.value === value ? " active" : ""}`}
+                onClick={() => { onChange(o.value); setOpen(false); }}>
+                {o.label}
+              </button>
+            ))}
+            {filtered.length === 0 && <div className="search-select-empty">无匹配</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 function Toast() {
   const [msg, setMsg] = useState("");
   useEffect(() => { _toastSet = setMsg; return () => { _toastSet = null; }; }, []);
@@ -379,10 +437,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
         <label>ST<select value={filters.stFilter} onChange={(e) => f("stFilter", e.target.value)}>
           <option value="all">全部</option><option value="exclude">排除ST</option><option value="only">仅ST</option>
         </select></label>
-        <label>行业<select value={filters.sector} onChange={(e) => f("sector", e.target.value)}>
-          <option value="">全部</option>
-          {sectors.map((s) => <option key={s.code} value={s.name}>{s.name}</option>)}
-        </select></label>
+        <label>行业<SearchSelect value={filters.sector} onChange={(v) => f("sector", v)} placeholder="全部行业" options={sectors.map((s) => ({ value: s.name, label: s.name }))} /></label>
         <label>搜索<input type="text" value={filters.keyword} placeholder="代码/名称" onChange={(e) => f("keyword", e.target.value)} /></label>
         <button onClick={fetchStocks}>筛选</button>
         <button className="toggle-more" onClick={() => setShowMore(!showMore)}>{showMore ? "收起" : "更多"}</button>
@@ -596,9 +651,7 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
                   <TradeButton code={s.code} name={s.name} price={s.price} onDone={onTrade} />
                   <button className="remove-btn" onClick={() => handleRemove(s.code)}>删除</button>
                   {groups.length > 1 && (
-                    <select className="group-select" value={s.group_id} onChange={(e) => handleMove(s.code, Number(e.target.value))}>
-                      {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
+                    <SearchSelect value={String(s.group_id)} onChange={(v) => handleMove(s.code, Number(v))} options={groups.map((g) => ({ value: String(g.id), label: g.name }))} />
                   )}
                 </td>
               </tr>

@@ -242,6 +242,20 @@ export interface FundFlowItem {
   small_pct: number;
 }
 
+export interface LhbItem {
+  代码: string;
+  名称: string;
+  上榜日: string;
+  收盘价: number;
+  涨跌幅: number;
+  净买额: number;
+  买入额: number;
+  卖出额: number;
+  成交额: number;
+  换手率: number;
+  上榜原因: string;
+}
+
 export const api = {
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
@@ -390,4 +404,8 @@ export const api = {
     request<FundFlowItem[]>(`/market/fund-flow/${code}`),
   getMinuteHistory: (code: string, period: string = "1") =>
     request<KLineItem[]>(`/market/minute/${code}?period=${period}`),
+  getRanking: (sortBy: string = "涨跌幅", order: string = "desc", limit: number = 50) =>
+    request<StockItem[]>(`/market/ranking?sort_by=${encodeURIComponent(sortBy)}&order=${order}&limit=${limit}`),
+  getLhb: (days: number = 5) =>
+    request<LhbItem[]>(`/market/lhb?days=${days}`),
 };

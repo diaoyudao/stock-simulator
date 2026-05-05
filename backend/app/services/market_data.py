@@ -890,3 +890,63 @@ def get_minute_history(code: str, period: str = "1") -> list[dict]:
         return result
     except Exception:
         return []
+
+
+# ─── 涨跌排行 ───
+
+def get_ranking(sort_by: str = "涨跌幅", order: str = "desc", limit: int = 50) -> list[dict]:
+    """从已有行情缓存中提取排行榜。sort_by: 涨跌幅/换手率/成交额/量比, order: desc/asc"""
+    all_stocks = filter_low_price(page=1, page_size=9999)
+    items = all_stocks.get("items", [])
+    if not items:
+        return []
+    reverse = order == "desc"
+    valid = [s for s in items if s.get(sort_by) is not None]
+    valid.sort(key=lambda s: s[sort_by], reverse=reverse)
+    return valid[:limit]
+
+
+# ─── 龙虎榜 ───
+
+_lhb_cache: dict[str, tuple[float, list[dict]]] = {}
+_lhb_cache_timeout = 300
+
+
+def get_lhb(days: int = 5) -> list[dict]:
+    """获取龙虎榜数据，缓存5分钟。"""
+    cache_key = "lhb"
+    now = time.time()
+    if cache_key in _lhb_cache:
+        ts, data = _lhb_cache[cache_key]
+        if now - ts < _lhb_cache_timeout:
+            return data
+    try:
+        from datetime import date, timedelta
+        end = date.today()
+        start = end - timedelta(days=days)
+        df = ak.stock_lhb_detail_em(
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+        )
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            item = {
+                "代码": str(row.get("代码", "")),
+                "名称": str(row.get("名称", "")),
+                "上榜日": str(row.get("上榜日", "")),
+                "收盘价": _safe_float(row.get("收盘价")),
+                "涨跌幅": _safe_float(row.get("涨跌幅")),
+                "净买额": _safe_float(row.get("龙虎榜净买额")),
+                "买入额": _safe_float(row.get("龙虎榜买入额")),
+                "卖出额": _safe_float(row.get("龙虎榜卖出额")),
+                "成交额": _safe_float(row.get("龙虎榜成交额")),
+                "换手率": _safe_float(row.get("换手率")),
+                "上榜原因": str(row.get("上榜原因", "")),
+            }
+            result.append(item)
+        _lhb_cache[cache_key] = (now, result)
+        return result
+    except Exception:
+        return []

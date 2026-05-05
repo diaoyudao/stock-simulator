@@ -729,6 +729,118 @@ body {
   padding: 6px 8px;
 }
 
+/* Ranking & LHB */
+.ranking-tab .detail-main-tabs {
+  margin-bottom: 8px;
+}
+
+.rank-num {
+  font-weight: 600;
+  color: var(--text-m);
+  width: 32px;
+  text-align: center;
+}
+
+.rank-num:nth-child(1) {  }
+tr:nth-child(1) .rank-num { color: #e63946; }
+tr:nth-child(2) .rank-num { color: #e67046; }
+tr:nth-child(3) .rank-num { color: #e6a046; }
+
+.lhb-reason {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-m);
+}
+
+/* Compare */
+.compare-badge {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.compare-panel {
+  position: fixed;
+  bottom: 60px;
+  left: 0;
+  right: 0;
+  max-height: 50vh;
+  background: var(--bg);
+  border-top: 2px solid var(--accent);
+  z-index: 100;
+  overflow-y: auto;
+  padding: 12px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
+}
+
+.compare-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.compare-close {
+  background: none;
+  border: 1px solid var(--text-m);
+  color: var(--text-m);
+  border-radius: 4px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.compare-table-wrap {
+  overflow-x: auto;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.compare-table th, .compare-table td {
+  padding: 6px 10px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.compare-table th {
+  background: var(--surface);
+  color: var(--text-h);
+  position: sticky;
+  top: 0;
+}
+
+.compare-metric {
+  text-align: left;
+  color: var(--text-m);
+  font-weight: 500;
+}
+
+.compare-remove {
+  margin-left: 6px;
+  cursor: pointer;
+  color: var(--text-m);
+  font-size: 11px;
+}
+
+.compare-remove:hover {
+  color: var(--loss);
+}
+
 /* Detail main tabs - tighter for 6 items */
 .detail-main-tabs .tab {
   padding: 4px 10px;

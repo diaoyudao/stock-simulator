@@ -40,7 +40,7 @@ bash init.sh
 ### 后端（`backend/`）
 
 - **入口**：`main.py` — FastAPI 应用，CORS 已开启，两个路由模块
-- **路由**：`app/routers/market.py`（13个端点）和 `app/routers/trade.py`（12个端点）
+- **路由**：`app/routers/market.py`（15个端点）和 `app/routers/trade.py`（12个端点）
 - **服务层**：
   - `app/services/market_data.py` — 数据获取、缓存、两轮筛选策略、分时/盘口/资金流向/分钟K线/财务/资讯
   - `app/services/trading.py` — 账户管理、买卖交易、SQLite 持久化（aiosqlite）
@@ -120,6 +120,8 @@ SQLite 表在 `trading.py:_ensure_tables()` 中内联创建，无迁移系统。
 | `GET /market/financial/statement/{code}` | 三大报表（?type=利润表/资产负债表/现金流量表） |
 | `GET /market/news/{code}` | 个股资讯 |
 | `GET /market/indices` | 大盘指数（上证/深证/创业板） |
+| `GET /market/ranking` | 涨跌排行（涨幅/跌幅/换手率/成交额/量比） |
+| `GET /market/lhb` | 龙虎榜（近N日异动个股） |
 
 ### 交易（trade.py）
 | 端点 | 说明 |

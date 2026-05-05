@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
-import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem } from "./api";
+import { api, type StockItem, type StockDetail, type KLineItem, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type MarketStatus, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type LhbItem } from "./api";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type CandlestickData, type HistogramData, ColorType } from "lightweight-charts";
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData, type MACDPoint, type KDJPoint, type RSIMultiPoint } from "./utils/indicators";
 import "./App.css";
 
-type Tab = "market" | "watchlist" | "sectors" | "positions" | "orders" | "analysis" | "transactions";
+type Tab = "market" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
 
 // 全局共享交易时间，避免每个组件创建独立 interval
 const TradingTimeContext = createContext<{ isTradingTime: boolean; tradingStatus: string; sessions: MarketStatus["sessions"] }>({
@@ -56,6 +56,82 @@ export default function App() {
   );
 }
 
+function ComparePanel({ list, setList, onSelectStock }: {
+  list: { code: string; name: string }[];
+  setList: React.Dispatch<React.SetStateAction<{ code: string; name: string }[]>>;
+  onSelectStock: (code: string) => void;
+}) {
+  const [details, setDetails] = useState<StockDetail[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (list.length === 0) return;
+    setLoading(true);
+    Promise.all(list.map((s) => api.getDetail(s.code)))
+      .then((results) => setDetails(results.filter(Boolean)))
+      .finally(() => setLoading(false));
+  }, [list]);
+
+  const removeFromCompare = (code: string) => {
+    setList((prev) => prev.filter((c) => c.code !== code));
+  };
+
+  if (list.length === 0) return null;
+
+  const metrics: { label: string; key: keyof StockDetail; fmt: (v: number) => string }[] = [
+    { label: "最新价", key: "最新价", fmt: (v) => v.toFixed(2) },
+    { label: "涨跌幅", key: "涨跌幅", fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%" },
+    { label: "涨跌额", key: "涨跌额", fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) },
+    { label: "换手率", key: "换手率", fmt: (v) => v.toFixed(2) + "%" },
+    { label: "市盈率", key: "市盈率-动态", fmt: (v) => v.toFixed(1) },
+    { label: "市净率", key: "市净率", fmt: (v) => v.toFixed(2) },
+    { label: "量比", key: "量比", fmt: (v) => v.toFixed(2) },
+    { label: "成交额", key: "成交额", fmt: (v) => v >= 1e8 ? (v / 1e8).toFixed(1) + "亿" : (v / 1e4).toFixed(0) + "万" },
+  ];
+
+  return (
+    <div className="compare-panel">
+      <div className="compare-header">
+        <span>多股对比 ({list.length}/5)</span>
+        <button className="compare-close" onClick={() => setList([])}>关闭</button>
+      </div>
+      {loading ? <div className="loading">加载中...</div> : (
+        <div className="compare-table-wrap">
+          <table className="compare-table">
+            <thead>
+              <tr>
+                <th>指标</th>
+                {details.map((d) => (
+                  <th key={d.代码}>
+                    <button className="stock-link" onClick={() => onSelectStock(d.代码)}>{d.名称}</button>
+                    <span className="compare-remove" onClick={() => removeFromCompare(d.代码)}>x</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.map((m) => (
+                <tr key={m.label}>
+                  <td className="compare-metric">{m.label}</td>
+                  {details.map((d) => {
+                    const val = d[m.key] as number;
+                    const isChange = m.key === "涨跌幅" || m.key === "涨跌额";
+                    return (
+                      <td key={d.代码 + m.key} className={isChange ? (val >= 0 ? "profit" : "loss") : ""}>
+                        {val != null ? m.fmt(val) : "-"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppInner() {
   const [tab, setTab] = useState<Tab>("market");
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -63,6 +139,8 @@ function AppInner() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txFilter, setTxFilter] = useState<{ start_date?: string; end_date?: string; action?: string }>({});
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
+  const [compareList, setCompareList] = useState<{ code: string; name: string }[]>([]);
+  const [showCompare, setShowCompare] = useState(false);
 
   const refresh = useCallback(async () => {
     const [dash, txs] = await Promise.all([
@@ -91,6 +169,11 @@ function AppInner() {
         positions={positions}
         onBack={() => setSelectedStock(null)}
         onTrade={refresh}
+        onAddCompare={(code, name) => {
+          if (!compareList.find((c) => c.code === code)) {
+            setCompareList([...compareList, { code, name }]);
+          }
+        }}
       />
     );
   }
@@ -108,13 +191,18 @@ function AppInner() {
           )}
         </div>
         {account && <AccountBar account={account} />}
+        {compareList.length > 0 && (
+          <button className="compare-badge" onClick={() => setShowCompare(!showCompare)}>
+            对比({compareList.length})
+          </button>
+        )}
         <NotificationBell />
       </header>
       <nav className="tabs">
-        {(["market", "watchlist", "sectors", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
+        {(["market", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
-            <span className="tab-icon">{t === "market" ? "📊" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
-            <span className="tab-label">{t === "market" ? "行情" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
         <button className="tab reset" onClick={async () => { await api.reset(); refresh(); }}>重置</button>
@@ -123,11 +211,13 @@ function AppInner() {
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
+        {tab === "ranking" && <RankingTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "orders" && <OrdersTab onTrade={refresh} />}
         {tab === "analysis" && <AnalysisTab />}
         {tab === "transactions" && <TransactionsTab transactions={transactions} onFilter={handleTxFilter} />}
       </main>
+      {showCompare && <ComparePanel list={compareList} setList={setCompareList} onSelectStock={setSelectedStock} />}
     </div>
   );
 }
@@ -423,7 +513,11 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
   }, []);
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
-  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    fetchList();
+    const timer = setInterval(fetchList, 30000);
+    return () => clearInterval(timer);
+  }, [fetchList]);
 
   const handleRemove = async (code: string) => {
     await api.removeWatchlist(code);
@@ -535,6 +629,95 @@ function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }
         ))}
       </tbody>
     </table></div>
+  );
+}
+
+type RankingSubTab = "涨幅" | "跌幅" | "换手率" | "成交额" | "量比" | "龙虎榜";
+
+function RankingTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+  const [subTab, setSubTab] = useState<RankingSubTab>("涨幅");
+  const [rankingData, setRankingData] = useState<StockItem[]>([]);
+  const [lhbData, setLhbData] = useState<LhbItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const rankingSortMap: Record<string, { sortBy: string; order: string }> = {
+    "涨幅": { sortBy: "涨跌幅", order: "desc" },
+    "跌幅": { sortBy: "涨跌幅", order: "asc" },
+    "换手率": { sortBy: "换手率", order: "desc" },
+    "成交额": { sortBy: "成交额", order: "desc" },
+    "量比": { sortBy: "量比", order: "desc" },
+  };
+
+  useEffect(() => {
+    if (subTab === "龙虎榜") {
+      setLoading(true);
+      api.getLhb().then((d) => { setLhbData(Array.isArray(d) ? d : []); }).finally(() => setLoading(false));
+    } else {
+      const { sortBy, order } = rankingSortMap[subTab];
+      setLoading(true);
+      api.getRanking(sortBy, order, 50).then((d) => { setRankingData(Array.isArray(d) ? d : []); }).finally(() => setLoading(false));
+    }
+  }, [subTab]);
+
+  const fmtAmt = (v: number) => {
+    if (v >= 1e8) return (v / 1e8).toFixed(1) + "亿";
+    if (v >= 1e4) return (v / 1e4).toFixed(0) + "万";
+    return v.toFixed(0);
+  };
+
+  if (loading) return <div className="loading">加载中...</div>;
+
+  return (
+    <div className="ranking-tab">
+      <div className="detail-main-tabs">
+        {(["涨幅", "跌幅", "换手率", "成交额", "量比", "龙虎榜"] as RankingSubTab[]).map((t) => (
+          <button key={t} className={`tab${subTab === t ? " active" : ""}`} onClick={() => setSubTab(t)}>{t}</button>
+        ))}
+      </div>
+      {subTab === "龙虎榜" ? (
+        <div className="table-wrap"><table className="stock-table lhb-table">
+          <thead>
+            <tr><th>代码</th><th>名称</th><th>上榜日</th><th>收盘价</th><th>涨跌幅</th><th>净买额</th><th>买入额</th><th>卖出额</th><th>换手率</th><th>上榜原因</th></tr>
+          </thead>
+          <tbody>
+            {lhbData.map((r, i) => (
+              <tr key={i}>
+                <td><button className="stock-link" onClick={() => onSelectStock(r.代码)}>{r.代码}</button></td>
+                <td>{r.名称}</td>
+                <td>{r.上榜日}</td>
+                <td>{r.收盘价?.toFixed(2)}</td>
+                <td className={r.涨跌幅 >= 0 ? "profit" : "loss"}>{r.涨跌幅 >= 0 ? "+" : ""}{r.涨跌幅?.toFixed(2)}%</td>
+                <td className={r.净买额 >= 0 ? "profit" : "loss"}>{fmtAmt(r.净买额)}</td>
+                <td>{fmtAmt(r.买入额)}</td>
+                <td>{fmtAmt(r.卖出额)}</td>
+                <td>{r.换手率?.toFixed(2)}%</td>
+                <td className="lhb-reason">{r.上榜原因}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      ) : (
+        <div className="table-wrap"><table className="stock-table">
+          <thead>
+            <tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交额</th>{subTab === "量比" && <th>量比</th>}</tr>
+          </thead>
+          <tbody>
+            {rankingData.map((s, i) => (
+              <tr key={s.代码}>
+                <td className="rank-num">{i + 1}</td>
+                <td><button className="stock-link" onClick={() => onSelectStock(s.代码)}>{s.代码}</button></td>
+                <td>{s.名称}</td>
+                <td>{s.最新价?.toFixed(2)}</td>
+                <td className={s.涨跌幅 >= 0 ? "profit" : "loss"}>{s.涨跌幅 >= 0 ? "+" : ""}{s.涨跌幅?.toFixed(2)}%</td>
+                <td>{s.换手率?.toFixed(2)}%</td>
+                <td>{fmtAmt(s.成交额)}</td>
+                {subTab === "量比" && <td>{(s as any).量比?.toFixed(2) || "-"}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
+    </div>
   );
 }
 
@@ -811,11 +994,12 @@ function AnalysisTab() {
 
 // ============ Stock Detail Page ============
 
-function StockDetail({ code, positions, onBack, onTrade }: {
+function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
   code: string;
   positions: Position[];
   onBack: () => void;
   onTrade: () => void;
+  onAddCompare: (code: string, name: string) => void;
 }) {
   const { isTradingTime, tradingStatus } = useTradingTime();
   const [detail, setDetail] = useState<StockDetail | null>(null);
@@ -1142,6 +1326,7 @@ function StockDetail({ code, positions, onBack, onTrade }: {
       <div className="detail-header">
         <button className="back-btn" onClick={onBack}>← 返回</button>
         <button className="watch-btn" onClick={() => api.addWatchlist(code, detail ? detail["名称"] : "")}>加自选</button>
+        <button className="watch-btn" onClick={() => onAddCompare(code, detail ? detail["名称"] : "")}>加对比</button>
         <button className="watch-btn" onClick={() => { setAlertValue(price); setShowAlert(!showAlert); }}>提醒</button>
         <div className="detail-title">
           <span className="detail-name">{detail["名称"]}</span>

@@ -227,3 +227,25 @@
 ### Risks
 - 东方财富搜索API依赖特定User-Agent/Referer，可能随版本变化
 - BDD测试使用mock，实际API响应格式变化不会被检测到
+
+## Session 12 — 2026-05-05
+
+### Done
+- 财务/资金流向数据排序修复：全部改为时间降序，最新数据优先显示
+  - 财务摘要: tail(8) + reverse()（AKShare升序返回）
+  - 三大报表: head(8)（AKShare降序返回，无需反转）
+  - 资金流向: reverse()（AKShare升序返回）
+
+### P0 待开发
+1. 涨跌排行 — 涨幅榜/跌幅榜/换手率榜/量比榜/成交额榜
+2. 龙虎榜 — 每日异动个股+营业部买卖明细
+3. 自选股实时刷新 — 自选页行情自动更新
+4. 多股对比 — 同屏对比2-5只股票
+
+### Done (P0)
+- 涨跌排行: `get_ranking()` 从行情缓存排序，`GET /market/ranking` 端点，前端排行Tab（5种子排行+龙虎榜）
+- 龙虎榜: `get_lhb()` 调用AKShare `stock_lhb_detail_em`，`GET /market/lhb` 端点，前端龙虎榜表格
+- 自选股实时刷新: WatchlistTab 加30秒定时轮询 `fetchList`
+- 多股对比: 详情页"加对比"按钮 + ComparePanel浮动面板，对比8项核心指标
+- BDD测试: 7个场景全部通过（涨跌排行5个 + 龙虎榜2个）
+- E2E验证: 新端点 `/ranking` 和 `/lhb` 正常返回

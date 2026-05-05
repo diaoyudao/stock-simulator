@@ -5,7 +5,7 @@ from app.services.market_data import (
     get_sector_list, get_sector_overview, compute_consecutive_days,
     get_index_data, get_financial_abstract, get_financial_statement,
     get_stock_news, get_intraday, get_bid_ask, get_fund_flow,
-    get_minute_history,
+    get_minute_history, get_ranking, get_lhb,
 )
 
 router = APIRouter()
@@ -133,3 +133,17 @@ def fund_flow(code: str):
 @router.get("/minute/{code}")
 def minute_history(code: str, period: str = Query("1")):
     return get_minute_history(code, period)
+
+
+@router.get("/ranking")
+def ranking(
+    sort_by: str = Query("涨跌幅"),
+    order: str = Query("desc"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    return get_ranking(sort_by=sort_by, order=order, limit=limit)
+
+
+@router.get("/lhb")
+def lhb(days: int = Query(5, ge=1, le=30)):
+    return get_lhb(days)

@@ -4,6 +4,21 @@ import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChar
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData } from "./utils/indicators";
 import "./App.css";
 
+// 轻量Toast
+let _toastTimer: ReturnType<typeof setTimeout>;
+let _toastSet: ((msg: string) => void) | null = null;
+function toast(msg: string) {
+  _toastSet?.(msg);
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => _toastSet?.(""), 1500);
+}
+function Toast() {
+  const [msg, setMsg] = useState("");
+  useEffect(() => { _toastSet = setMsg; return () => { _toastSet = null; }; }, []);
+  if (!msg) return null;
+  return <div className="toast">{msg}</div>;
+}
+
 type Tab = "market" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
 
 // 全局共享交易时间，避免每个组件创建独立 interval
@@ -52,6 +67,7 @@ export default function App() {
   return (
     <TradingTimeProvider>
       <AppInner />
+      <Toast />
     </TradingTimeProvider>
   );
 }
@@ -413,7 +429,7 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
                 <td>{s["换手率"]?.toFixed(2)}%</td>
                 <td>{(s["成交量"] / 10000).toFixed(0)}万</td>
                 <td>
-                  <button className="watch-btn" onClick={() => api.addWatchlist(s["代码"], s["名称"])}>自选</button>
+                  <button className="watch-btn" onClick={async () => { await api.addWatchlist(s["代码"], s["名称"]); toast("已加自选"); }}>自选</button>
                   <TradeButton code={s["代码"]} name={s["名称"]} price={s["最新价"]} onDone={onTrade} />
                 </td>
               </tr>
@@ -520,18 +536,21 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
 
   const handleRemove = async (code: string) => {
     await api.removeWatchlist(code);
+    toast("已移除");
     fetchList();
   };
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     await api.createGroup(newGroupName.trim());
+    toast("分组已创建");
     setNewGroupName("");
     fetchGroups();
   };
 
   const handleDeleteGroup = async (id: number) => {
     await api.deleteGroup(id);
+    toast("分组已删除");
     if (activeGroup === id) setActiveGroup(0);
     fetchGroups();
     fetchList();
@@ -795,7 +814,7 @@ function OrdersTab({ onTrade: _onTrade }: { onTrade: () => void }) {
 
   const handleCancel = async (id: number) => {
     const res = await api.cancelOrder(id) as any;
-    if (res.success) load();
+    if (res.success) { toast("已撤单"); load(); }
     else alert(res.error);
   };
 
@@ -1312,6 +1331,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
       const res = await api.sell(code, tradeQty) as any;
       if (res.error) { alert(res.error); return; }
     }
+    toast(tradeMode === "limit" ? "委托已提交" : `${tradeAction === "buy" ? "买入" : "卖出"}成功`);
     setTradeQty(100);
     onTrade();
     const updated = await api.getDetail(code);
@@ -1323,8 +1343,8 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
       {/* Header */}
       <div className="detail-header">
         <button className="back-btn" onClick={onBack}>← 返回</button>
-        <button className="watch-btn" onClick={() => api.addWatchlist(code, detail ? detail["名称"] : "")}>加自选</button>
-        <button className="watch-btn" onClick={() => onAddCompare(code, detail ? detail["名称"] : "")}>加对比</button>
+        <button className="watch-btn" onClick={async () => { await api.addWatchlist(code, detail ? detail["名称"] : ""); toast("已加自选"); }}>加自选</button>
+        <button className="watch-btn" onClick={() => { onAddCompare(code, detail ? detail["名称"] : ""); toast("已加对比"); }}>加对比</button>
         <button className="watch-btn" onClick={() => { setAlertValue(price); setShowAlert(!showAlert); }}>提醒</button>
         <div className="detail-title">
           <span className="detail-name">{detail["名称"]}</span>
@@ -1340,7 +1360,7 @@ function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
           <input type="number" value={alertValue} step={0.01} onChange={(e) => setAlertValue(Number(e.target.value))} />
           <button onClick={async () => {
             const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue) as any;
-            if (res.success) { setShowAlert(false); alert("提醒已设置"); }
+            if (res.success) { setShowAlert(false); toast("提醒已设置"); }
             else alert(res.error);
           }}>确认</button>
           <button onClick={() => setShowAlert(false)}>取消</button>

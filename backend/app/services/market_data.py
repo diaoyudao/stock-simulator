@@ -801,8 +801,8 @@ def _fetch_sector_constituents_sina_batch(labels: list[str]) -> dict[str, list[d
                     })
                 with lock:
                     result[label] = stocks
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("新浪行业成分股获取失败(%s): %s", label, e)
 
     futures = [_executor.submit(_fetch_one, lb) for lb in labels]
     for f in futures:
@@ -865,6 +865,38 @@ def _build_sector_overview_sina() -> list[dict] | None:
         return None
 
 
+def _enrich_sector_52week(sectors: list[dict]) -> None:
+    """利用已有52周缓存，为板块概览补充创新高/新低数量。"""
+    get_spot_data()
+    with _cache_lock:
+        price_map = dict(_price_map_cache)
+    for sec in sectors:
+        name = sec["name"]
+        # 从成分股缓存获取该板块的股票代码
+        cached = _sector_constituent_cache.get(name)
+        if not cached:
+            continue
+        _, codes = cached
+        if not codes:
+            continue
+        high_count, low_count = 0, 0
+        for code in codes:
+            if code not in _52week_cache:
+                continue
+            _, w_high, w_low = _52week_cache[code]
+            if w_high <= 0 or w_low <= 0:
+                continue
+            price = price_map.get(code, 0)
+            if price <= 0:
+                continue
+            if price >= w_high * 0.95:
+                high_count += 1
+            if price <= w_low * 1.05:
+                low_count += 1
+        sec["new_high_count"] = high_count
+        sec["new_low_count"] = low_count
+
+
 def get_sector_overview() -> list[dict]:
     """返回各行业板块概览，带5分钟缓存。东方财富优先，失败降级新浪。"""
     global _sector_overview_cache, _sector_overview_cache_time
@@ -875,6 +907,7 @@ def get_sector_overview() -> list[dict]:
     result = _build_sector_overview_em() or _build_sector_overview_sina()
     if result:
         result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+        _enrich_sector_52week(result)
         _sector_overview_cache = result
         _sector_overview_cache_time = now
         return result

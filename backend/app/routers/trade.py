@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
@@ -55,17 +55,19 @@ _WORKDAYS_2026 = {
 def _is_workday(date_str: str | None = None) -> bool:
     """判断是否为交易日（工作日且非节假日，或调休上班日）。"""
     if date_str is None:
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(_CST).strftime("%Y-%m-%d")
     if date_str in _HOLIDAYS_2026:
         return False
     if date_str in _WORKDAYS_2026:
         return True
-    return datetime.now().weekday() < 5 if date_str == datetime.now().strftime("%Y-%m-%d") \
+    return datetime.now(_CST).weekday() < 5 if date_str == datetime.now(_CST).strftime("%Y-%m-%d") \
         else datetime.strptime(date_str, "%Y-%m-%d").weekday() < 5
 
 
+_CST = timezone(timedelta(hours=8))
+
 def _check_trading_time():
-    now = datetime.now()
+    now = datetime.now(_CST)
     date_str = now.strftime("%Y-%m-%d")
     if not _is_workday(date_str):
         if date_str in _HOLIDAYS_2026:

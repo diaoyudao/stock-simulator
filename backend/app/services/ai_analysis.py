@@ -10,7 +10,7 @@ from pathlib import Path
 from app.services.market_data import (
     get_stock_by_code, get_stock_history, get_fund_flow,
     get_financial_abstract, get_stock_news, BoundedCache,
-    _safe_float, compute_consecutive_days,
+    _safe_float, compute_consecutive_days, _all_caches,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,8 @@ def _get_glm_config():
 CACHE_TIMEOUT = 300  # 5分钟缓存
 _analysis_cache: BoundedCache = BoundedCache(128)
 _score_cache: BoundedCache = BoundedCache(256)
+_all_caches.append((_analysis_cache, CACHE_TIMEOUT))
+_all_caches.append((_score_cache, CACHE_TIMEOUT))
 
 DISCLAIMER = "AI分析仅供参考，不构成投资建议，投资有风险，入市需谨慎。"
 

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # ─── 有界缓存（LRU淘汰，防止内存泄漏） ───
 
 class BoundedCache(OrderedDict):
-    """基于 OrderedDict 的 LRU 缓存，最大容量限制，惰性淘汰过期条目。"""
+    """基于 OrderedDict 的 LRU 缓存，最大容量限制，支持主动过期清理。"""
 
     def __init__(self, maxsize: int = 1024):
         super().__init__()
@@ -24,6 +24,24 @@ class BoundedCache(OrderedDict):
         super().__setitem__(key, value)
         while len(self) > self._maxsize:
             self.popitem(last=False)  # 淘汰最久未访问的
+
+    def cleanup(self, timeout: float) -> int:
+        """移除超时条目（value首元素为时间戳），返回清理数量。"""
+        now = time.time()
+        expired = [k for k, v in self.items() if now - v[0] > timeout]
+        for k in expired:
+            del self[k]
+        return len(expired)
+
+
+# ─── 缓存注册表（用于统一周期清理） ───
+
+_all_caches: list[tuple[BoundedCache, float]] = []
+
+
+def _register_cache(cache: BoundedCache, timeout: float) -> BoundedCache:
+    _all_caches.append((cache, timeout))
+    return cache
 
 
 # ─── 缓存配置 ───
@@ -40,7 +58,7 @@ _refreshing = False
 # 行业板块缓存（5分钟）
 _sector_list_cache: list[dict] = []
 _sector_list_cache_time = 0.0
-_sector_constituent_cache: BoundedCache = BoundedCache(256)  # sector_name -> (ts, codes)
+_sector_constituent_cache: BoundedCache = _register_cache(BoundedCache(256), 300)  # sector_name -> (ts, codes)
 _sector_constituent_timeout = 300
 
 # 板块概览缓存（5分钟）
@@ -48,7 +66,7 @@ _sector_overview_cache: list[dict] = []
 _sector_overview_cache_time = 0.0
 
 # K线缓存（60秒）
-_kline_cache: BoundedCache = BoundedCache(512)
+_kline_cache: BoundedCache = _register_cache(BoundedCache(512), 60)
 _kline_cache_timeout = 60
 
 # 大盘指数缓存（60秒）
@@ -56,7 +74,7 @@ _index_cache: tuple[float, list[dict]] = (0.0, [])
 _index_cache_timeout = 60
 
 # 52周高低缓存（5分钟）
-_52week_cache: BoundedCache = BoundedCache(1024)  # code -> (ts, high, low)
+_52week_cache: BoundedCache = _register_cache(BoundedCache(1024), 300)  # code -> (ts, high, low)
 _52week_cache_timeout = 300
 
 _executor = ThreadPoolExecutor(max_workers=8)
@@ -622,10 +640,10 @@ def get_sector_overview() -> list[dict]:
 
 # ─── 财务数据 ───
 
-_financial_cache: BoundedCache = BoundedCache(256)
+_financial_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
 _financial_cache_timeout = 300
 
-_statement_cache: BoundedCache = BoundedCache(256)
+_statement_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
 _statement_cache_timeout = 300
 
 _VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
@@ -701,7 +719,7 @@ def get_financial_statement(code: str, statement_type: str) -> list[dict]:
 
 # ─── 个股资讯 ───
 
-_news_cache: BoundedCache = BoundedCache(256)
+_news_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
 _news_cache_timeout = 300
 
 
@@ -777,7 +795,7 @@ def get_stock_news(code: str) -> list[dict]:
 
 # ─── 分时图 ───
 
-_intraday_cache: BoundedCache = BoundedCache(256)
+_intraday_cache: BoundedCache = _register_cache(BoundedCache(256), 60)
 _intraday_cache_timeout = 60
 
 
@@ -810,7 +828,7 @@ def get_intraday(code: str) -> list[dict]:
 
 # ─── 五档盘口 ───
 
-_bidask_cache: BoundedCache = BoundedCache(256)
+_bidask_cache: BoundedCache = _register_cache(BoundedCache(256), 10)
 _bidask_cache_timeout = 10
 
 
@@ -848,7 +866,7 @@ def get_bid_ask(code: str) -> dict:
 
 # ─── 资金流向 ───
 
-_fund_flow_cache: BoundedCache = BoundedCache(256)
+_fund_flow_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
 _fund_flow_cache_timeout = 300
 
 
@@ -897,7 +915,7 @@ def get_fund_flow(code: str) -> list[dict]:
 
 # ─── 分钟K线 ───
 
-_minute_cache: BoundedCache = BoundedCache(512)
+_minute_cache: BoundedCache = _register_cache(BoundedCache(512), 60)
 _minute_cache_timeout = 60
 
 
@@ -946,7 +964,7 @@ def get_ranking(sort_by: str = "涨跌幅", order: str = "desc", limit: int = 50
 
 # ─── 龙虎榜 ───
 
-_lhb_cache: BoundedCache = BoundedCache(16)
+_lhb_cache: BoundedCache = _register_cache(BoundedCache(16), 300)
 _lhb_cache_timeout = 300
 
 
@@ -989,3 +1007,13 @@ def get_lhb(days: int = 5) -> list[dict]:
     except Exception as e:
         logger.warning("API调用失败: %s", e)
         return []
+
+
+def cleanup_all_caches() -> int:
+    """清理所有已注册缓存的过期条目，返回总清理数量。"""
+    total = 0
+    for cache, timeout in _all_caches:
+        total += cache.cleanup(timeout)
+    if total:
+        logger.debug("缓存清理: 移除 %d 条过期条目", total)
+    return total

@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 import os
 
 from app.routers import market, trade, ai
+from app.services.market_data import cleanup_all_caches
 
 app = FastAPI(title="StockSimulator", version="0.1.0")
 
@@ -18,6 +20,15 @@ app.add_middleware(
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(trade.router, prefix="/api/trade", tags=["trade"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
+
+
+@app.on_event("startup")
+async def _start_cache_cleanup():
+    async def _loop():
+        while True:
+            await asyncio.sleep(60)
+            cleanup_all_caches()
+    asyncio.create_task(_loop())
 
 
 @app.get("/health")

@@ -122,19 +122,23 @@ class TestFetchAllStocks:
         assert len(result) == 3
         assert result[0]["代码"] == "000001"
 
+    @patch("app.services.market_data.ak.stock_zh_a_spot")
     @patch("app.services.market_data.ak.stock_zh_a_spot_em")
-    def test_empty(self, mock_ak):
-        from app.services.market_data import _fetch_all_stocks
-        mock_ak.return_value = pd.DataFrame()
+    def test_empty(self, mock_em, mock_sina):
+        from app.services.market_data import _fetch_all_stocks, _cached_stocks
+        mock_em.return_value = pd.DataFrame()
+        mock_sina.return_value = pd.DataFrame()
         result = _fetch_all_stocks()
-        assert result == []
+        assert result == _cached_stocks
 
+    @patch("app.services.market_data.ak.stock_zh_a_spot")
     @patch("app.services.market_data.ak.stock_zh_a_spot_em")
-    def test_exception(self, mock_ak):
-        from app.services.market_data import _fetch_all_stocks
-        mock_ak.side_effect = Exception("network error")
+    def test_exception(self, mock_em, mock_sina):
+        from app.services.market_data import _fetch_all_stocks, _cached_stocks
+        mock_em.side_effect = Exception("network error")
+        mock_sina.side_effect = Exception("network error")
         result = _fetch_all_stocks()
-        assert result == []
+        assert result == _cached_stocks
 
 
 class TestFilterLowPrice:

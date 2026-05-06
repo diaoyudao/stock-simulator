@@ -304,3 +304,33 @@
 - 后端：30+ API端点（含AI分析2个），全部编译通过
 - 前端：组件拆分后App.tsx ~987行，TypeScript编译通过
 - AI分析需配置环境变量 `GLM_API_KEY` 才能使用LLM分析功能
+
+## Session 14 — 2026-05-06
+
+### Done
+- t43: 提交5个未提交文件（多源降级/行业跳转/AI资金流样式/Playwright依赖）
+- t44: 修复 sector_failed 逻辑反转 — None(API失败)和空集合均标记failed，不再静默跳过筛选
+- t45: 修复 Sina 降级筛选失效 — 标记_degraded，跳过缺失字段筛选，返回warning
+- t46: 修复 get_spot_data 线程安全 — Lock+Event替代布尔标志，Event.wait替代60秒忙等待
+- t47: 计算 sector new_high/new_low — 利用52周缓存+成分股缓存惰性计算
+- t48: Sina sector 批量异常日志 — logger.warning替代静默pass
+- t49: AI score 端点限流 — 添加15次/分钟RateLimiter
+- t50: 交易时间时区处理 — datetime.now(_CST)强制中国标准时间
+- t51: MarketTab 陈旧数据提示 — warning横幅 + 后端warning字段支持
+- t52: SectorsTab 刷新+失败提示 — usePolling 2分钟刷新 + 错误toast
+- t53: 交易错误处理统一 — TradeButton添加catch+toast，StockDetail alert→toast
+- t54: 交易面板细节 — 限价模式limitPrice默认当前价，BidAsk运算符优先级修复
+- t55: CSS变量补全 — --card-bg/--text-primary/--text-secondary映射已有变量
+- t56: Sina sector 批量并发控制 — Semaphore(10)
+- t57: RateLimiter 内存清理 — 清理空列表+超限裁剪
+- t58: _sina_prefix 北交所 — 4/8开头映射bj
+
+### Decisions
+- **Sina降级策略**: 标记_degraded + 跳过缺失字段筛选 + 返回warning，而非静默返回错误结果
+- **52周新高/低计数**: 惰性计算，只使用已缓存数据，不额外触发API调用
+- **toast类型参数**: 暂不扩展toast支持type参数，错误消息直接用文本前缀区分
+
+### Current State
+- 后端：30+ API端点，P0-P3 Bug全部修复，线程安全优化
+- 前端：TypeScript编译通过，生产构建成功
+- 未推送：7个commit领先origin/master

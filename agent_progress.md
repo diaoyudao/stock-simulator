@@ -331,6 +331,26 @@
 - **toast类型参数**: 暂不扩展toast支持type参数，错误消息直接用文本前缀区分
 
 ### Current State
-- 后端：30+ API端点，P0-P3 Bug全部修复，线程安全优化
+- 后端：34+ API端点（含ETF 4个），P0-P3 Bug全部修复，线程安全优化
 - 前端：TypeScript编译通过，生产构建成功
 - 未推送：7个commit领先origin/master
+
+## Session 15 — 2026-05-06
+
+### Done
+- t59: ETF行情缓存+筛选 — fund_etf_spot_em+60秒缓存+基金类型关键词匹配
+- t60: ETF K线+详情 — fund_etf_hist_em/fund_etf_hist_min_em，52周+基金类型推断
+- t61: ETF路由+交易价格合并 — 新建etf.py(4端点)+_get_price/_build_price_map增加ETF查找
+- t62: API客户端+类型 — EtfItem/EtfDetail接口+4个ETF API方法
+- t63: ETF Tab+筛选 — EtfTab组件(价格/涨跌幅/类型/关键词+排序+分页)
+- t64: ETF详情页 — StockDetail isEtf prop，ETF模式只显示K线Tab
+
+### Decisions
+- **ETF类型筛选**: 名称关键词匹配(指数/债券/商品/货币/跨境)，零延迟无需额外API
+- **ETF详情简化**: 只保留K线Tab，隐藏不适用的子Tab
+- **ETF代码识别**: 前端/^[15]/正则自动识别，切换数据源
+
+### Current State
+- 后端：34+ API端点，ETF全链路(行情/筛选/K线/详情/交易)
+- 前端：9个Tab(含ETF)，生产构建通过
+- 未推送：10个commit领先origin/master

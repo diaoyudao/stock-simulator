@@ -495,7 +495,7 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
       setQty(100);
       onDone();
     } catch (e: any) {
-      toast(e?.detail || e?.message || "交易失败", "error");
+      toast(e?.detail || e?.message || "交易失败");
     } finally {
       setSubmitting(false);
     }
@@ -655,7 +655,7 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
       const data = await api.getSectorOverview();
       setSectors(data);
     } catch {
-      toast("行业板块数据加载失败", "error");
+      toast("行业板块数据加载失败");
     } finally {
       setLoading(false);
     }

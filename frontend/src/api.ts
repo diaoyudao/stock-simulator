@@ -60,6 +60,7 @@ export interface SpotResult {
   page: number;
   page_size: number;
   items: StockItem[];
+  warning?: string;
 }
 
 export interface StockItem {

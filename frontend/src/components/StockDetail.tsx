@@ -373,13 +373,13 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
     try {
       if (tradeMode === "limit") {
         const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice) as any;
-        if (res.error) { toast(res.error, "error"); return; }
+        if (res.error) { toast(res.error); return; }
       } else if (tradeAction === "buy") {
         const res = await api.buy(code, detail["名称"], tradeQty) as any;
-        if (res.error) { toast(res.error, "error"); return; }
+        if (res.error) { toast(res.error); return; }
       } else {
         const res = await api.sell(code, tradeQty) as any;
-        if (res.error) { toast(res.error, "error"); return; }
+        if (res.error) { toast(res.error); return; }
       }
     toast(tradeMode === "limit" ? "委托已提交" : `${tradeAction === "buy" ? "买入" : "卖出"}成功`);
     setTradeQty(100);
@@ -387,7 +387,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
     const updated = await api.getDetail(code);
     setDetail(updated);
     } catch (e: any) {
-      toast(e?.detail || e?.message || "交易失败", "error");
+      toast(e?.detail || e?.message || "交易失败");
     }
   };
 
@@ -414,7 +414,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
           <button onClick={async () => {
             const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue) as any;
             if (res.success) { setShowAlert(false); toast("提醒已设置"); }
-            else toast(res.error, "error");
+            else toast(res.error);
           }}>确认</button>
           <button onClick={() => setShowAlert(false)}>取消</button>
         </div>

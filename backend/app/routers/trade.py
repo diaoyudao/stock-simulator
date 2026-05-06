@@ -99,14 +99,19 @@ class SellRequest(BaseModel):
 
 
 def _get_price(code: str) -> float | None:
-    from app.services.market_data import get_stock_by_code
+    from app.services.market_data import get_stock_by_code, get_etf_by_code
     s = get_stock_by_code(code)
+    if s:
+        return s["最新价"]
+    s = get_etf_by_code(code)
     return s["最新价"] if s else None
 
 
 def _build_price_map() -> dict[str, float]:
-    from app.services.market_data import get_price_map
-    return get_price_map()
+    from app.services.market_data import get_price_map, get_etf_price_map
+    pm = get_price_map()
+    pm.update(get_etf_price_map())
+    return pm
 
 
 async def _build_price_map_async() -> dict[str, float]:

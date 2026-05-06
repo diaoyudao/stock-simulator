@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import os
 
-from app.routers import market, trade, ai
+from app.routers import market, trade, ai, etf
 from app.services.market_data import cleanup_all_caches
 
 app = FastAPI(title="StockSimulator", version="0.1.0")
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(trade.router, prefix="/api/trade", tags=["trade"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
+app.include_router(etf.router, prefix="/api/etf", tags=["etf"])
 
 
 @app.on_event("startup")

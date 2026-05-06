@@ -54,6 +54,8 @@ _stock_index: dict[str, dict] = {}
 _price_map_cache: dict[str, float] = {}
 _fetching = False
 _refreshing = False
+_cache_lock = threading.Lock()
+_cache_ready = threading.Event()
 
 # 行业板块缓存（5分钟）
 _sector_list_cache: list[dict] = []
@@ -149,6 +151,7 @@ def _convert_sina_spot(df) -> list[dict]:
             "总市值": 0,
             "流通市值": 0,
             "量比": 0,
+            "_degraded": True,
         })
     return result
 
@@ -179,46 +182,65 @@ def get_spot_data() -> list[dict]:
     """获取全市场A股实时行情，带60秒缓存。过期前提前后台刷新，避免冷加载。"""
     global _cached_stocks, _last_fetch_time, _fetching, _refreshing
     global _stock_index, _price_map_cache
-    now = time.time()
-    if _cached_stocks and now - _last_fetch_time < _cache_timeout - _refresh_ahead:
-        return _cached_stocks
-    if _cached_stocks and now - _last_fetch_time < _cache_timeout:
-        if not _refreshing:
-            _refreshing = True
-            def _bg_refresh():
-                global _cached_stocks, _last_fetch_time, _fetching, _refreshing
-                global _stock_index, _price_map_cache
-                _fetching = True
-                try:
-                    data = _fetch_all_stocks()
-                    if data:
-                        _cached_stocks = data
-                        _stock_index = {s["代码"]: s for s in data}
-                        _price_map_cache = {s["代码"]: s["最新价"] for s in data}
-                        _last_fetch_time = time.time()
-                finally:
-                    _fetching = False
-                    _refreshing = False
-            threading.Thread(target=_bg_refresh, daemon=True).start()
-        return _cached_stocks
-    if _fetching:
-        # 另一个线程正在获取数据，等待其完成
-        for _ in range(120):  # 最多等60秒
-            time.sleep(0.5)
-            if not _fetching and _cached_stocks:
-                return _cached_stocks
-        return _cached_stocks
-    _fetching = True
+
+    def _update_cache(data):
+        """原子更新缓存数据。需在 _cache_lock 内调用。"""
+        global _cached_stocks, _stock_index, _price_map_cache, _last_fetch_time
+        _cached_stocks = data
+        _stock_index = {s["代码"]: s for s in data}
+        _price_map_cache = {s["代码"]: s["最新价"] for s in data}
+        _last_fetch_time = time.time()
+        _cache_ready.set()
+
+    with _cache_lock:
+        now = time.time()
+        # 缓存未过期：直接返回
+        if _cached_stocks and now - _last_fetch_time < _cache_timeout - _refresh_ahead:
+            return _cached_stocks
+        # 缓存接近过期：后台刷新，返回旧数据
+        if _cached_stocks and now - _last_fetch_time < _cache_timeout:
+            if not _refreshing:
+                _refreshing = True
+                def _bg_refresh():
+                    global _fetching, _refreshing
+                    with _cache_lock:
+                        _fetching = True
+                    try:
+                        data = _fetch_all_stocks()
+                        if data:
+                            with _cache_lock:
+                                _update_cache(data)
+                    finally:
+                        with _cache_lock:
+                            _fetching = False
+                            _refreshing = False
+                threading.Thread(target=_bg_refresh, daemon=True).start()
+            return _cached_stocks
+        # 缓存已过期
+        if _fetching:
+            # 另一线程正在获取，等待完成
+            _cache_ready.clear()
+            should_wait = True
+        else:
+            # 当前线程负责获取
+            _fetching = True
+            should_wait = False
+
+    if should_wait:
+        _cache_ready.wait(timeout=60)
+        with _cache_lock:
+            return _cached_stocks
+
     try:
         data = _fetch_all_stocks()
         if data:
-            _cached_stocks = data
-            _stock_index = {s["代码"]: s for s in data}
-            _price_map_cache = {s["代码"]: s["最新价"] for s in data}
-            _last_fetch_time = time.time()
-        return _cached_stocks
+            with _cache_lock:
+                _update_cache(data)
+        with _cache_lock:
+            return _cached_stocks
     finally:
-        _fetching = False
+        with _cache_lock:
+            _fetching = False
 
 
 def get_stock_by_code(code: str) -> dict | None:
@@ -335,16 +357,24 @@ def filter_low_price(
 ) -> dict:
     """筛选低价股，返回分页结果。单次遍历筛选（量比已在行情数据中）。"""
     stocks = get_spot_data()
+    # 检测降级数据（新浪备用源缺失部分字段）
+    degraded = bool(stocks and stocks[0].get("_degraded"))
 
     # 行业筛选：按需获取成分股代码集合
     sector_codes: set[str] | None = None
     sector_failed = False
     if sector:
         sector_codes = _fetch_sector_constituents(sector)
-        if sector_codes is not None and len(sector_codes) == 0:
+        if sector_codes is None:
+            # 全部API失败，无法按行业筛选
+            sector_failed = True
+            logger.warning("行业成分股API全部失败，跳过行业筛选: %s", sector)
+        elif len(sector_codes) == 0:
             sector_failed = True
 
     # 单次遍历筛选
+    # 降级数据（新浪源）缺失字段：换手率、市盈率、市净率、总市值、流通市值、量比
+    _degraded_fields = {"换手率", "市盈率-动态", "市净率", "总市值", "流通市值", "量比"} if degraded else set()
     filtered = []
     for s in stocks:
         if not (min_price <= s["最新价"] <= max_price):
@@ -353,38 +383,42 @@ def filter_low_price(
             continue
         if max_change_pct is not None and s["涨跌幅"] > max_change_pct:
             continue
-        if min_turnover_rate is not None and s["换手率"] < min_turnover_rate:
+        if "换手率" not in _degraded_fields and min_turnover_rate is not None and s["换手率"] < min_turnover_rate:
             continue
         if min_volume is not None and s["成交量"] < min_volume:
             continue
         if min_amount is not None and s["成交额"] < min_amount:
             continue
-        if min_pe is not None and s["市盈率-动态"] < min_pe:
-            continue
-        if max_pe is not None and s["市盈率-动态"] > max_pe:
-            continue
-        if min_pb is not None and s["市净率"] < min_pb:
-            continue
-        if max_pb is not None and s["市净率"] > max_pb:
-            continue
-        if min_mktcap is not None and s["总市值"] < min_mktcap:
-            continue
-        if max_mktcap is not None and s["总市值"] > max_mktcap:
-            continue
-        if min_nmc is not None and s["流通市值"] < min_nmc:
-            continue
-        if max_nmc is not None and s["流通市值"] > max_nmc:
-            continue
+        if "市盈率-动态" not in _degraded_fields:
+            if min_pe is not None and s["市盈率-动态"] < min_pe:
+                continue
+            if max_pe is not None and s["市盈率-动态"] > max_pe:
+                continue
+        if "市净率" not in _degraded_fields:
+            if min_pb is not None and s["市净率"] < min_pb:
+                continue
+            if max_pb is not None and s["市净率"] > max_pb:
+                continue
+        if "总市值" not in _degraded_fields:
+            if min_mktcap is not None and s["总市值"] < min_mktcap:
+                continue
+            if max_mktcap is not None and s["总市值"] > max_mktcap:
+                continue
+        if "流通市值" not in _degraded_fields:
+            if min_nmc is not None and s["流通市值"] < min_nmc:
+                continue
+            if max_nmc is not None and s["流通市值"] > max_nmc:
+                continue
         amplitude = ((s["最高"] - s["最低"]) / s["昨收"] * 100) if s["昨收"] > 0 else 0
         if min_amplitude is not None and amplitude < min_amplitude:
             continue
         if max_amplitude is not None and amplitude > max_amplitude:
             continue
-        # 量比筛选（已在行情数据中）
-        if min_volume_ratio is not None and s.get("量比", 0) < min_volume_ratio:
-            continue
-        if max_volume_ratio is not None and s.get("量比", 0) > max_volume_ratio:
-            continue
+        if "量比" not in _degraded_fields:
+            if min_volume_ratio is not None and s.get("量比", 0) < min_volume_ratio:
+                continue
+            if max_volume_ratio is not None and s.get("量比", 0) > max_volume_ratio:
+                continue
         if exclude_st and ("ST" in s["名称"] or "st" in s["名称"]):
             continue
         if only_st and "ST" not in s["名称"] and "st" not in s["名称"]:
@@ -410,13 +444,23 @@ def filter_low_price(
     total = len(filtered)
     start = (page - 1) * page_size
     end = start + page_size
+    page_items = filtered[start:end]
+    # 清除内部标记
+    for s in page_items:
+        s.pop("_degraded", None)
 
-    return {
+    result = {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": filtered[start:end],
+        "items": page_items,
     }
+    if sector_failed and sector:
+        result["warning"] = f"行业「{sector}」成分股数据获取失败，行业筛选未生效"
+    if degraded:
+        result["warning"] = (result.get("warning", "") + "；" if result.get("warning") else "") + \
+            "当前使用备用数据源，换手率/市盈率/市净率/市值/量比筛选暂不可用"
+    return result
 
 
 # ─── 股票详情 ───

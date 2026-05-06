@@ -18,7 +18,27 @@ class RateLimiter:
         timestamps = [t for t in timestamps if now - t < self._window]
         if len(timestamps) >= self._max:
             self._requests[ip] = timestamps
+            self._cleanup(now)
             return False
         timestamps.append(now)
         self._requests[ip] = timestamps
+        self._cleanup(now)
         return True
+
+    def _cleanup(self, now: float) -> None:
+        """定期清理空列表和过期IP条目，防止内存无限增长。"""
+        if len(self._requests) <= 256:
+            return
+        # 清理空列表
+        empty = [ip for ip, ts in self._requests.items() if not ts]
+        for ip in empty:
+            del self._requests[ip]
+        # 如果仍然过大，清理最旧的条目
+        if len(self._requests) > 1024:
+            # 按最新时间戳排序，保留最近的512个
+            sorted_ips = sorted(
+                self._requests.items(),
+                key=lambda x: x[1][-1] if x[1] else 0,
+                reverse=True,
+            )
+            self._requests = dict(sorted_ips[:512])

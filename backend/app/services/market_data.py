@@ -784,25 +784,27 @@ def _build_sector_overview_em() -> list[dict] | None:
 
 
 def _fetch_sector_constituents_sina_batch(labels: list[str]) -> dict[str, list[dict]]:
-    """并发获取多个新浪行业的成分股。返回 {label: [{code, name, changepercent}, ...]}。"""
+    """并发获取多个新浪行业的成分股。返回 {label: [{code, name, changepercent}, ...]}。限制并发为10。"""
     result = {}
     lock = threading.Lock()
+    sem = threading.Semaphore(10)
 
     def _fetch_one(label: str):
-        try:
-            df = ak.stock_sector_detail(sector=label)
-            if df is not None and not df.empty:
-                stocks = []
-                for _, row in df.iterrows():
-                    stocks.append({
-                        "code": str(row.get("code", "")),
-                        "name": str(row.get("name", "")),
-                        "changepercent": _safe_float(row.get("changepercent", 0)),
-                    })
-                with lock:
-                    result[label] = stocks
-        except Exception as e:
-            logger.warning("新浪行业成分股获取失败(%s): %s", label, e)
+        with sem:
+            try:
+                df = ak.stock_sector_detail(sector=label)
+                if df is not None and not df.empty:
+                    stocks = []
+                    for _, row in df.iterrows():
+                        stocks.append({
+                            "code": str(row.get("code", "")),
+                            "name": str(row.get("name", "")),
+                            "changepercent": _safe_float(row.get("changepercent", 0)),
+                        })
+                    with lock:
+                        result[label] = stocks
+            except Exception as e:
+                logger.warning("新浪行业成分股获取失败(%s): %s", label, e)
 
     futures = [_executor.submit(_fetch_one, lb) for lb in labels]
     for f in futures:
@@ -926,7 +928,11 @@ _VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
 
 
 def _sina_prefix(code: str) -> str:
-    return "sh" if code.startswith("6") or code.startswith("9") else "sz"
+    if code.startswith("6") or code.startswith("9"):
+        return "sh"
+    if code.startswith("4") or code.startswith("8"):
+        return "bj"
+    return "sz"
 
 
 def get_financial_abstract(code: str) -> list[dict]:

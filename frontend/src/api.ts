@@ -96,6 +96,37 @@ export interface StockDetail extends StockItem {
   行业: string;
 }
 
+export interface EtfItem {
+  代码: string;
+  名称: string;
+  最新价: number;
+  涨跌幅: number;
+  涨跌额: number;
+  今开: number;
+  最高: number;
+  最低: number;
+  昨收: number;
+  买一: number;
+  卖一: number;
+  成交量: number;
+  成交额: number;
+  换手率: number;
+  量比?: number;
+}
+
+export interface EtfDetail extends EtfItem {
+  "52周最高": number;
+  "52周最低": number;
+  基金类型: string;
+}
+
+export interface EtfSpotResult {
+  total: number;
+  page: number;
+  page_size: number;
+  items: EtfItem[];
+}
+
 export interface SectorItem {
   name: string;
   code: string;
@@ -321,6 +352,20 @@ export interface AIScore {
 }
 
 export const api = {
+  // ─── ETF ───
+  getEtfSpot: (params: Record<string, string | number>) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).map(([k, v]) => [k, String(v)])
+    ).toString();
+    return request<EtfSpotResult>(`/etf/spot?${qs}`);
+  },
+  getEtfDetail: (code: string) => request<EtfDetail>(`/etf/detail/${code}`),
+  getEtfHistory: (code: string, period: string = "daily") =>
+    request<KLineItem[]>(`/etf/history/${code}?period=${period}`),
+  getEtfMinute: (code: string, period: string = "1") =>
+    request<KLineItem[]>(`/etf/minute/${code}?period=${period}`),
+
+  // ─── A股行情 ───
   getSpot: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(
       Object.entries(params).map(([k, v]) => [k, String(v)])

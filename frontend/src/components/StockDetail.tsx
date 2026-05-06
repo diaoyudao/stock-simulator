@@ -63,12 +63,13 @@ function IntradayChart({ data, basePrice }: { data: IntradayItem[]; basePrice: n
   return <div className="intraday-chart-wrap" ref={ref} />;
 }
 
-export default function StockDetail({ code, positions, onBack, onTrade, onAddCompare }: {
+export default function StockDetail({ code, positions, onBack, onTrade, onAddCompare, isEtf }: {
   code: string;
   positions: Position[];
   onBack: () => void;
   onTrade: () => void;
   onAddCompare: (code: string, name: string) => void;
+  isEtf?: boolean;
 }) {
   const { isTradingTime, tradingStatus } = useTradingTime();
   const [detail, setDetail] = useState<StockDetailType | null>(null);
@@ -105,9 +106,11 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   const pos = positions.find((p) => p.code === code);
 
   useEffect(() => {
-    Promise.all([api.getDetail(code), api.getHistory(code, klinePeriod)])
-      .then(([d, k]) => { setDetail(d); setKlineData(k); });
-  }, [code, klinePeriod]);
+    const detailP = isEtf ? api.getEtfDetail(code) : api.getDetail(code);
+    const klineP = isEtf ? api.getEtfHistory(code, klinePeriod) : api.getHistory(code, klinePeriod);
+    Promise.all([detailP, klineP])
+      .then(([d, k]) => { setDetail(d as any); setKlineData(k); });
+  }, [code, klinePeriod, isEtf]);
 
   const candleData = useMemo<CandleData[]>(
     () => klineData.map((d) => ({
@@ -384,8 +387,8 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
     toast(tradeMode === "limit" ? "委托已提交" : `${tradeAction === "buy" ? "买入" : "卖出"}成功`);
     setTradeQty(100);
     onTrade();
-    const updated = await api.getDetail(code);
-    setDetail(updated);
+    const updated = isEtf ? await api.getEtfDetail(code) : await api.getDetail(code);
+    setDetail(updated as any);
     } catch (e: any) {
       toast(e?.detail || e?.message || "交易失败");
     }
@@ -446,8 +449,11 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
       <div className="detail-chart-section">
         <div className="chart-toolbar">
           <div className="period-tabs detail-main-tabs">
-            {(["kline", "intraday", "bidask", "fundflow", "financial", "news", "ai"] as const).map((t) => (
-              <button key={t} className={detailTab === t ? "tab active" : "tab"} onClick={() => setDetailTab(t)}>
+            {(isEtf
+              ? (["kline"] as const)
+              : (["kline", "intraday", "bidask", "fundflow", "financial", "news", "ai"] as const)
+            ).map((t) => (
+              <button key={t} className={detailTab === t ? "tab active" : "tab"} onClick={() => setDetailTab(t as any)}>
                 {t === "kline" ? "K线" : t === "intraday" ? "分时" : t === "bidask" ? "盘口" : t === "fundflow" ? "资金" : t === "financial" ? "财务" : t === "ai" ? "AI分析" : "资讯"}
               </button>
             ))}

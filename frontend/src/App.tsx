@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type StockItem, type StockDetail as StockDetailType, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder } from "./api";
+import { api, type StockItem, type StockDetail as StockDetailType, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder, type EtfItem } from "./api";
 import { createChart, LineSeries, type IChartApi, ColorType } from "lightweight-charts";
 import { toast, Toast, ToastProvider, usePolling, TradingTimeProvider, useTradingTime } from "./utils/shared";
 import { fmtAmt } from "./utils/format";
@@ -64,7 +64,7 @@ function SearchSelect({ value, onChange, options, placeholder }: {
     </div>
   );
 }
-type Tab = "market" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
+type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
 
 export default function App() {
   return (
@@ -184,12 +184,15 @@ function AppInner() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const isEtfCode = selectedStock ? /^[15]/.test(selectedStock) : false;
+
   if (selectedStock) {
     return (
       <StockDetail
         code={selectedStock}
         positions={positions}
         onBack={() => setSelectedStock(null)}
+        isEtf={isEtfCode}
         onTrade={refresh}
         onAddCompare={(code, name) => {
           if (compareList.length >= 5) { toast("最多对比5只股票"); return; }
@@ -222,16 +225,17 @@ function AppInner() {
         <NotificationBell />
       </header>
       <nav className="tabs">
-        {(["market", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
+        {(["market", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
-            <span className="tab-icon">{t === "market" ? "📊" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
-            <span className="tab-label">{t === "market" ? "行情" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
         <button className="tab reset" onClick={() => { if (confirm("确定重置账户？所有持仓和交易记录将被清除！")) { api.reset().then(refresh); } }}>重置</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} pendingFilter={pendingFilter} onFilterApplied={() => setPendingFilter(null)} />}
+        {tab === "etf" && <EtfTab onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectSector={(f) => { setTab("market"); setPendingFilter(f); }} onSelectStock={setSelectedStock} />}
         {tab === "ranking" && <RankingTab onSelectStock={setSelectedStock} />}
@@ -640,6 +644,110 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
             ))}
           </tbody>
         </table></div>
+      )}
+    </div>
+  );
+}
+
+function EtfTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectStock: (code: string) => void }) {
+  const [etfs, setEtfs] = useState<EtfItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [filters, setFilters] = useState({
+    minPrice: "", maxPrice: "",
+    minChangePct: "", maxChangePct: "",
+    minAmount: "", etfType: "", keyword: "",
+    sortBy: "涨跌幅", sortOrder: "desc",
+  });
+
+  const buildParams = useCallback(() => {
+    const p: Record<string, string | number | boolean> = {
+      sort_by: filters.sortBy, sort_order: filters.sortOrder,
+      page, page_size: 20,
+    };
+    if (filters.minPrice) p.min_price = filters.minPrice;
+    if (filters.maxPrice) p.max_price = filters.maxPrice;
+    if (filters.minChangePct) p.min_change_pct = filters.minChangePct;
+    if (filters.maxChangePct) p.max_change_pct = filters.maxChangePct;
+    if (filters.minAmount) p.min_amount = parseFloat(filters.minAmount) * 1e8;
+    if (filters.etfType) p.etf_type = filters.etfType;
+    if (filters.keyword) p.keyword = filters.keyword;
+    return p;
+  }, [filters, page]);
+
+  const fetchEtfs = useCallback(async () => {
+    setLoading(true);
+    setWarning(null);
+    try {
+      const res = await api.getEtfSpot(buildParams() as Record<string, string | number>);
+      setEtfs(res.items);
+      setTotal(res.total);
+    } catch {
+      setWarning("ETF数据加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [buildParams]);
+
+  useEffect(() => {
+    const t = setTimeout(fetchEtfs, 400);
+    return () => clearTimeout(t);
+  }, [fetchEtfs]);
+
+  const totalPages = Math.ceil(total / 20);
+  const f = (key: string, val: string) => { setFilters({ ...filters, [key]: val }); setPage(1); };
+
+  return (
+    <div className="market-tab">
+      <div className="filters">
+        <label>价格<input type="number" value={filters.minPrice} placeholder="最低" onChange={(e) => f("minPrice", e.target.value)} />-<input type="number" value={filters.maxPrice} placeholder="最高" onChange={(e) => f("maxPrice", e.target.value)} /></label>
+        <label>涨跌幅%<input type="number" value={filters.minChangePct} placeholder="最低" onChange={(e) => f("minChangePct", e.target.value)} />-<input type="number" value={filters.maxChangePct} placeholder="最高" onChange={(e) => f("maxChangePct", e.target.value)} /></label>
+        <label>类型<select value={filters.etfType} onChange={(e) => f("etfType", e.target.value)}>
+          <option value="">全部</option><option value="指数">指数</option><option value="债券">债券</option><option value="商品">商品</option><option value="货币">货币</option><option value="跨境">跨境</option>
+        </select></label>
+        <label>搜索<input type="text" value={filters.keyword} placeholder="代码/名称" onChange={(e) => f("keyword", e.target.value)} /></label>
+        <button onClick={fetchEtfs}>筛选</button>
+      </div>
+      <div className="filters sort-bar">
+        <label>排序<select value={filters.sortBy} onChange={(e) => { setFilters({ ...filters, sortBy: e.target.value }); setPage(1); }}>
+          <option value="涨跌幅">涨跌幅</option><option value="最新价">价格</option><option value="成交额">成交额</option><option value="成交量">成交量</option>
+        </select></label>
+        <label>方向<select value={filters.sortOrder} onChange={(e) => { setFilters({ ...filters, sortOrder: e.target.value }); setPage(1); }}>
+          <option value="desc">降序</option><option value="asc">升序</option>
+        </select></label>
+        <span className="result-info">共 {total} 只</span>
+      </div>
+      {warning && <div className="warning-bar">{warning}</div>}
+      {loading ? <div className="loading">加载中...</div> : (
+        <div className="table-wrap"><table className="stock-table">
+          <thead>
+            <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>成交额</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            {etfs.length === 0 && !loading && (
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-secondary)", padding: "24px" }}>暂无符合筛选条件的ETF</td></tr>
+            )}
+            {etfs.map((s) => (
+              <tr key={s["代码"]}>
+                <td><button className="stock-link" onClick={() => onSelectStock(s["代码"])}>{s["代码"]}</button></td>
+                <td>{s["名称"]}</td>
+                <td>{s["最新价"].toFixed(3)}</td>
+                <td className={s["涨跌幅"] >= 0 ? "profit" : "loss"}>{s["涨跌幅"] >= 0 ? "+" : ""}{s["涨跌幅"].toFixed(2)}%</td>
+                <td>{fmtAmt(s["成交额"])}</td>
+                <td><TradeButton code={s["代码"]} name={s["名称"]} price={s["最新价"]} onDone={onTrade} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
+      {totalPages > 1 && (
+        <div className="pagination">
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</button>
+          <span>{page}/{totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}>下一页</button>
+        </div>
       )}
     </div>
   );

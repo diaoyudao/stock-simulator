@@ -370,21 +370,25 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   const changeClass = detail["涨跌幅"] >= 0 ? "profit" : "loss";
 
   const executeTrade = async () => {
-    if (tradeMode === "limit") {
-      const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice) as any;
-      if (res.error) { alert(res.error); return; }
-    } else if (tradeAction === "buy") {
-      const res = await api.buy(code, detail["名称"], tradeQty) as any;
-      if (res.error) { alert(res.error); return; }
-    } else {
-      const res = await api.sell(code, tradeQty) as any;
-      if (res.error) { alert(res.error); return; }
-    }
+    try {
+      if (tradeMode === "limit") {
+        const res = await api.createOrder(code, detail["名称"], tradeAction, tradeQty, limitPrice) as any;
+        if (res.error) { toast(res.error, "error"); return; }
+      } else if (tradeAction === "buy") {
+        const res = await api.buy(code, detail["名称"], tradeQty) as any;
+        if (res.error) { toast(res.error, "error"); return; }
+      } else {
+        const res = await api.sell(code, tradeQty) as any;
+        if (res.error) { toast(res.error, "error"); return; }
+      }
     toast(tradeMode === "limit" ? "委托已提交" : `${tradeAction === "buy" ? "买入" : "卖出"}成功`);
     setTradeQty(100);
     onTrade();
     const updated = await api.getDetail(code);
     setDetail(updated);
+    } catch (e: any) {
+      toast(e?.detail || e?.message || "交易失败", "error");
+    }
   };
 
   return (
@@ -410,7 +414,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
           <button onClick={async () => {
             const res = await api.createAlert(code, detail["名称"], alertCondition, alertValue) as any;
             if (res.success) { setShowAlert(false); toast("提醒已设置"); }
-            else alert(res.error);
+            else toast(res.error, "error");
           }}>确认</button>
           <button onClick={() => setShowAlert(false)}>取消</button>
         </div>
@@ -554,7 +558,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
                     <div key={i} className="bidask-row sell-row">
                       <span className="bidask-label">卖{ i}</span>
                       <span className="bidask-price loss">{bidAskData[`sell_${i}` as keyof BidAskData].toFixed(2)}</span>
-                      <span className="bidask-vol">{(bidAskData[`sell_${i}_vol` as keyof BidAskData] as number / 100).toFixed(0)}手</span>
+                      <span className="bidask-vol">{((bidAskData[`sell_${i}_vol` as keyof BidAskData] as number) / 100).toFixed(0)}手</span>
                     </div>
                   ))}
                 </div>
@@ -567,7 +571,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
                     <div key={i} className="bidask-row buy-row">
                       <span className="bidask-label">买{i}</span>
                       <span className="bidask-price profit">{bidAskData[`buy_${i}` as keyof BidAskData].toFixed(2)}</span>
-                      <span className="bidask-vol">{(bidAskData[`buy_${i}_vol` as keyof BidAskData] as number / 100).toFixed(0)}手</span>
+                      <span className="bidask-vol">{((bidAskData[`buy_${i}_vol` as keyof BidAskData] as number) / 100).toFixed(0)}手</span>
                     </div>
                   ))}
                 </div>
@@ -735,7 +739,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
         <div className="detail-trade-row">
           <button className={tradeAction === "buy" ? "detail-buy active" : "detail-buy"} onClick={() => setTradeAction("buy")} disabled={!isTradingTime}>买入</button>
           <button className={tradeAction === "sell" ? "detail-sell active" : "detail-sell"} onClick={() => setTradeAction("sell")} disabled={!isTradingTime}>卖出</button>
-          <select className="trade-mode" value={tradeMode} onChange={(e) => setTradeMode(e.target.value as "market" | "limit")}>
+          <select className="trade-mode" value={tradeMode} onChange={(e) => { const m = e.target.value as "market" | "limit"; setTradeMode(m); if (m === "limit" && limitPrice === 0) setLimitPrice(price); }}>
             <option value="market">市价</option>
             <option value="limit">限价</option>
           </select>

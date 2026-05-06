@@ -308,6 +308,7 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [sectors, setSectors] = useState<{name: string; code: string}[]>([]);
   const [filters, setFilters] = useState({
@@ -380,8 +381,9 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
       const res = await api.getSpot(buildParams() as Record<string, string | number>);
       setStocks(res.items);
       setTotal(res.total);
+      setWarning(res.warning || null);
     } catch (e: any) {
-      setError(e?.detail || e?.message || "行情数据加载失败");
+      setWarning("数据刷新失败，当前显示的可能不是最新数据");
     } finally {
       setLoading(false);
     }
@@ -437,6 +439,7 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
         </select></label>
         <span className="result-info">共 {total} 只</span>
       </div>
+      {warning && <div className="warning-bar">{warning}</div>}
       {loading ? <div className="loading">加载中...</div> : (
         <div className="table-wrap"><table className="stock-table">
           <thead>
@@ -491,6 +494,8 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
       setOpen(false);
       setQty(100);
       onDone();
+    } catch (e: any) {
+      toast(e?.detail || e?.message || "交易失败", "error");
     } finally {
       setSubmitting(false);
     }
@@ -644,10 +649,20 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
   const [sectors, setSectors] = useState<SectorOverviewItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const fetchSectors = useCallback(async () => {
     setLoading(true);
-    api.getSectorOverview().then(setSectors).finally(() => setLoading(false));
+    try {
+      const data = await api.getSectorOverview();
+      setSectors(data);
+    } catch {
+      toast("行业板块数据加载失败", "error");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { fetchSectors(); }, [fetchSectors]);
+  usePolling(fetchSectors, 120000);
 
   if (loading) return <div className="loading">加载中...</div>;
   return (

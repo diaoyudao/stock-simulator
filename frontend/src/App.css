@@ -19,6 +19,9 @@
   --space-md: 12px;
   --space-lg: 16px;
   --space-xl: 24px;
+  --card-bg: var(--surface);
+  --text-primary: var(--text-h);
+  --text-secondary: var(--text-muted);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -244,6 +247,16 @@ body {
 }
 
 .loading { text-align: center; padding: 40px; }
+
+.warning-bar {
+  background: rgba(255, 180, 0, 0.15);
+  border: 1px solid rgba(255, 180, 0, 0.3);
+  color: #b8860b;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
 
 .data-error {
   display: flex;

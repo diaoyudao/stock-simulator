@@ -162,6 +162,7 @@ function AppInner() {
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [compareList, setCompareList] = useState<{ code: string; name: string }[]>([]);
   const [showCompare, setShowCompare] = useState(false);
+  const [pendingFilter, setPendingFilter] = useState<{sector?: string; keyword?: string} | null>(null);
 
   const refresh = useCallback(async () => {
     const [dash, txs] = await Promise.all([
@@ -230,9 +231,9 @@ function AppInner() {
         <button className="tab reset" onClick={() => { if (confirm("确定重置账户？所有持仓和交易记录将被清除！")) { api.reset().then(refresh); } }}>重置</button>
       </nav>
       <main className="main">
-        {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} />}
+        {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} pendingFilter={pendingFilter} onFilterApplied={() => setPendingFilter(null)} />}
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
-        {tab === "sectors" && <SectorsTab onSelectStock={setSelectedStock} />}
+        {tab === "sectors" && <SectorsTab onSelectSector={(f) => { setTab("market"); setPendingFilter(f); }} onSelectStock={setSelectedStock} />}
         {tab === "ranking" && <RankingTab onSelectStock={setSelectedStock} />}
         {tab === "positions" && <PositionsTab positions={positions} onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "orders" && <OrdersTab onTrade={refresh} />}
@@ -301,11 +302,12 @@ function NotificationBell() {
   );
 }
 
-function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectStock: (code: string) => void }) {
+function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: { onTrade: () => void; onSelectStock: (code: string) => void; pendingFilter?: {sector?: string; keyword?: string} | null; onFilterApplied?: () => void }) {
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [sectors, setSectors] = useState<{name: string; code: string}[]>([]);
   const [filters, setFilters] = useState({
@@ -326,6 +328,17 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
   });
 
   useEffect(() => { api.getSectors().then(setSectors).catch(() => {}); }, []);
+
+  useEffect(() => {
+    if (!pendingFilter) return;
+    setFilters((f) => ({
+      ...f,
+      ...(pendingFilter.sector != null ? { sector: pendingFilter.sector } : {}),
+      ...(pendingFilter.keyword != null ? { keyword: pendingFilter.keyword } : {}),
+    }));
+    setPage(1);
+    onFilterApplied?.();
+  }, [pendingFilter, onFilterApplied]);
 
   const buildParams = useCallback(() => {
     const p: Record<string, string | number | boolean> = {
@@ -362,10 +375,13 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
 
   const fetchStocks = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await api.getSpot(buildParams() as Record<string, string | number>);
       setStocks(res.items);
       setTotal(res.total);
+    } catch (e: any) {
+      setError(e?.detail || e?.message || "行情数据加载失败");
     } finally {
       setLoading(false);
     }
@@ -427,7 +443,10 @@ function MarketTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectSt
             <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交量</th><th>操作</th></tr>
           </thead>
           <tbody>
-            {stocks.length === 0 && !loading && (
+            {stocks.length === 0 && !loading && error && (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--loss-color)", padding: "24px" }}>{error}</td></tr>
+            )}
+            {stocks.length === 0 && !loading && !error && (
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-secondary)", padding: "24px" }}>暂无符合筛选条件的股票</td></tr>
             )}
             {stocks.map((s) => (
@@ -621,7 +640,7 @@ function WatchlistTab({ onSelectStock, onTrade }: { onSelectStock: (code: string
   );
 }
 
-function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter: {sector?: string; keyword?: string}) => void; onSelectStock: (code: string) => void }) {
   const [sectors, setSectors] = useState<SectorOverviewItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -639,7 +658,7 @@ function SectorsTab({ onSelectStock }: { onSelectStock: (code: string) => void }
       <tbody>
         {sectors.map((s) => (
           <tr key={s.name}>
-            <td className="sector-name">{s.name}</td>
+            <td className="sector-name"><button className="stock-link" onClick={() => onSelectSector({sector: s.name})}>{s.name}</button></td>
             <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
             <td><span className="profit">{s.up_count}</span>/<span className="loss">{s.down_count}</span></td>
             <td>{fmtAmt(s.amount)}</td>

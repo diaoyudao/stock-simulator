@@ -122,16 +122,57 @@ def _convert_ak_spot(df) -> list[dict]:
 
 # ─── 全市场行情 ───
 
+def _convert_sina_spot(df) -> list[dict]:
+    """将 ak.stock_zh_a_spot() (新浪) 的 DataFrame 转为统一中文 key 格式。"""
+    result = []
+    for _, row in df.iterrows():
+        raw_code = str(row.get("代码", ""))
+        code = raw_code[2:] if len(raw_code) > 6 and raw_code[:2] in ("sh", "sz", "bj") else raw_code
+        price = _safe_float(row.get("最新价", 0))
+        result.append({
+            "代码": code,
+            "名称": str(row.get("名称", "")),
+            "最新价": price,
+            "涨跌额": _safe_float(row.get("涨跌额", 0)),
+            "涨跌幅": _safe_float(row.get("涨跌幅", 0)),
+            "今开": _safe_float(row.get("今开", 0)),
+            "最高": _safe_float(row.get("最高", 0)),
+            "最低": _safe_float(row.get("最低", 0)),
+            "昨收": _safe_float(row.get("昨收", 0)),
+            "买一": _safe_float(row.get("买入", price)),
+            "卖一": _safe_float(row.get("卖出", price)),
+            "成交量": int(_safe_float(row.get("成交量", 0))),
+            "成交额": _safe_float(row.get("成交额", 0)),
+            "换手率": 0,
+            "市盈率-动态": 0,
+            "市净率": 0,
+            "总市值": 0,
+            "流通市值": 0,
+            "量比": 0,
+        })
+    return result
+
+
 def _fetch_all_stocks() -> list[dict]:
-    """通过 AKShare (东方财富) 获取全市场 A 股实时行情。"""
+    """获取全市场 A 股实时行情。东方财富优先，失败降级新浪。均失败返回旧缓存。"""
+    global _cached_stocks
+    # 东方财富
     try:
         df = ak.stock_zh_a_spot_em()
-        if df is None or df.empty:
-            return []
-        return _convert_ak_spot(df)
+        if df is not None and not df.empty:
+            return _convert_ak_spot(df)
     except Exception as e:
-        logger.warning("API调用失败: %s", e)
-        return []
+        logger.warning("东方财富行情API失败: %s", e)
+    # 新浪备用
+    try:
+        df = ak.stock_zh_a_spot()
+        if df is not None and not df.empty:
+            logger.info("使用新浪行情备用接口，%d条", len(df))
+            return _convert_sina_spot(df)
+    except Exception as e:
+        logger.warning("新浪行情API失败: %s", e)
+    logger.warning("所有行情API失败，使用旧缓存(%d条)", len(_cached_stocks))
+    return _cached_stocks
 
 
 def get_spot_data() -> list[dict]:
@@ -161,6 +202,11 @@ def get_spot_data() -> list[dict]:
             threading.Thread(target=_bg_refresh, daemon=True).start()
         return _cached_stocks
     if _fetching:
+        # 另一个线程正在获取数据，等待其完成
+        for _ in range(120):  # 最多等60秒
+            time.sleep(0.5)
+            if not _fetching and _cached_stocks:
+                return _cached_stocks
         return _cached_stocks
     _fetching = True
     try:
@@ -292,8 +338,11 @@ def filter_low_price(
 
     # 行业筛选：按需获取成分股代码集合
     sector_codes: set[str] | None = None
+    sector_failed = False
     if sector:
         sector_codes = _fetch_sector_constituents(sector)
+        if sector_codes is not None and len(sector_codes) == 0:
+            sector_failed = True
 
     # 单次遍历筛选
     filtered = []
@@ -342,7 +391,7 @@ def filter_low_price(
             continue
         if keyword and keyword not in s["名称"] and keyword not in s["代码"]:
             continue
-        if sector and sector_codes is not None and s["代码"] not in sector_codes:
+        if sector and not sector_failed and sector_codes is not None and s["代码"] not in sector_codes:
             continue
         filtered.append(s)
 
@@ -554,47 +603,106 @@ def get_index_data() -> list[dict]:
 
 # ─── 行业板块 ───
 
+def _fetch_sector_list_em() -> list[dict] | None:
+    """通过东方财富获取行业板块列表。失败返回 None。"""
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is None or df.empty:
+            return None
+        sectors = []
+        seen = set()
+        for _, row in df.iterrows():
+            name = str(row.get("板块名称", ""))
+            if name in seen:
+                continue
+            seen.add(name)
+            sectors.append({
+                "name": name,
+                "code": str(row.get("板块代码", "")),
+            })
+        return sectors
+    except Exception as e:
+        logger.warning("东方财富行业API失败: %s", e)
+        return None
+
+
+def _fetch_sector_list_sina() -> list[dict] | None:
+    """通过新浪获取行业板块列表（备用）。失败返回 None。"""
+    try:
+        df = ak.stock_sector_spot()
+        if df is None or df.empty:
+            return None
+        sectors = []
+        for _, row in df.iterrows():
+            sectors.append({
+                "name": str(row.get("板块", "")),
+                "code": str(row.get("label", "")),
+            })
+        return sectors
+    except Exception as e:
+        logger.warning("新浪行业API失败: %s", e)
+        return None
+
+
 def _fetch_sector_list() -> list[dict]:
-    """通过 AKShare 获取行业板块列表，缓存5分钟。"""
+    """获取行业板块列表，缓存5分钟。东方财富优先，失败降级新浪。"""
     global _sector_list_cache, _sector_list_cache_time
     now = time.time()
     if _sector_list_cache and now - _sector_list_cache_time < 300:
         return _sector_list_cache
-    try:
-        df = ak.stock_board_industry_name_em()
-        if df is None or df.empty:
-            return []
-        sectors = []
-        for _, row in df.iterrows():
-            sectors.append({
-                "name": str(row.get("板块名称", "")),
-                "code": str(row.get("板块代码", "")),
-            })
+    sectors = _fetch_sector_list_em() or _fetch_sector_list_sina() or []
+    if sectors:
         _sector_list_cache = sectors
         _sector_list_cache_time = now
-        return sectors
+    return sectors
+
+
+def _fetch_sector_constituents_em(sector_name: str) -> set[str] | None:
+    """通过东方财富获取行业成分股。失败返回 None。"""
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=sector_name)
+        if df is None or df.empty:
+            return None
+        return set(df["代码"].astype(str).tolist())
     except Exception as e:
-        logger.warning("API调用失败: %s", e)
-        return []
+        logger.warning("东方财富成分股API失败: %s", e)
+        return None
+
+
+def _fetch_sector_constituents_sina(sector_label: str) -> set[str] | None:
+    """通过新浪获取行业成分股（备用）。失败返回 None。"""
+    try:
+        df = ak.stock_sector_detail(sector=sector_label)
+        if df is None or df.empty:
+            return None
+        return set(df["code"].astype(str).tolist())
+    except Exception as e:
+        logger.warning("新浪成分股API失败: %s", e)
+        return None
 
 
 def _fetch_sector_constituents(sector_name: str) -> set[str]:
-    """获取某个行业的成分股代码集合，缓存5分钟。"""
+    """获取某个行业的成分股代码集合，缓存5分钟。东方财富优先，失败降级新浪。"""
     now = time.time()
     if sector_name in _sector_constituent_cache:
         ts, codes = _sector_constituent_cache[sector_name]
         if now - ts < _sector_constituent_timeout:
             return codes
-    try:
-        df = ak.stock_board_industry_cons_em(symbol=sector_name)
-        if df is None or df.empty:
-            return set()
-        codes = set(df["代码"].astype(str).tolist())
+    codes = _fetch_sector_constituents_em(sector_name)
+    if codes is None:
+        # 东方财富失败，通过新浪备用接口查找
+        # 先在缓存中找行业对应的label/code
+        sector_label = ""
+        for s in _sector_list_cache:
+            if s["name"] == sector_name:
+                sector_label = s["code"]
+                break
+        if sector_label:
+            codes = _fetch_sector_constituents_sina(sector_label)
+    if codes is not None:
         _sector_constituent_cache[sector_name] = (now, codes)
         return codes
-    except Exception as e:
-        logger.warning("API调用失败: %s", e)
-        return set()
+    return None
 
 
 def get_sector_list() -> list[dict]:
@@ -602,40 +710,131 @@ def get_sector_list() -> list[dict]:
     return _fetch_sector_list()
 
 
-def get_sector_overview() -> list[dict]:
-    """返回各行业板块概览，带5分钟缓存。"""
-    global _sector_overview_cache, _sector_overview_cache_time
-    now = time.time()
-    if _sector_overview_cache and now - _sector_overview_cache_time < 300:
-        return _sector_overview_cache
-
+def _build_sector_overview_em() -> list[dict] | None:
+    """通过东方财富构建板块概览。失败返回 None。"""
     try:
         df = ak.stock_board_industry_name_em()
         if df is None or df.empty:
-            return _sector_overview_cache or []
-
+            return None
         result = []
+        get_spot_data()
+        name_to_code = {s["名称"]: s["代码"] for s in _cached_stocks}
         for _, row in df.iterrows():
             top_name = str(row.get("领涨股票", ""))
             top_change = _safe_float(row.get("领涨股票-涨跌幅", 0))
+            top_code = name_to_code.get(top_name, "")
             result.append({
                 "name": str(row.get("板块名称", "")),
                 "avg_change_pct": round(_safe_float(row.get("涨跌幅", 0)), 2),
                 "up_count": int(_safe_float(row.get("上涨家数", 0))),
                 "down_count": int(_safe_float(row.get("下跌家数", 0))),
-                "amount": 0,  # 板块列表不含总成交额
-                "new_high_count": 0,  # 需逐股52周数据，代价过高
+                "amount": 0,
+                "new_high_count": 0,
                 "new_low_count": 0,
-                "top_stocks": [{"代码": "", "名称": top_name, "涨跌幅": round(top_change, 2)}],
+                "top_stocks": [{"代码": top_code, "名称": top_name, "涨跌幅": round(top_change, 2)}],
             })
+        return result
+    except Exception as e:
+        logger.warning("东方财富板块概览失败: %s", e)
+        return None
 
+
+def _fetch_sector_constituents_sina_batch(labels: list[str]) -> dict[str, list[dict]]:
+    """并发获取多个新浪行业的成分股。返回 {label: [{code, name, changepercent}, ...]}。"""
+    result = {}
+    lock = threading.Lock()
+
+    def _fetch_one(label: str):
+        try:
+            df = ak.stock_sector_detail(sector=label)
+            if df is not None and not df.empty:
+                stocks = []
+                for _, row in df.iterrows():
+                    stocks.append({
+                        "code": str(row.get("code", "")),
+                        "name": str(row.get("name", "")),
+                        "changepercent": _safe_float(row.get("changepercent", 0)),
+                    })
+                with lock:
+                    result[label] = stocks
+        except Exception:
+            pass
+
+    futures = [_executor.submit(_fetch_one, lb) for lb in labels]
+    for f in futures:
+        f.result(timeout=30)
+    return result
+
+
+def _build_sector_overview_sina() -> list[dict] | None:
+    """通过新浪构建板块概览（备用）。并发获取成分股统计涨跌家数。"""
+    try:
+        df = ak.stock_sector_spot()
+        if df is None or df.empty:
+            return None
+        get_spot_data()
+        name_to_code = {s["名称"]: s["代码"] for s in _cached_stocks}
+        price_map = {s["代码"]: s["最新价"] for s in _cached_stocks}
+
+        # 并发获取所有行业成分股，用于统计涨跌家数
+        labels = df["label"].tolist()
+        label_constituents = _fetch_sector_constituents_sina_batch(labels)
+
+        result = []
+        for _, row in df.iterrows():
+            label = str(row.get("label", ""))
+
+            # 从成分股统计涨跌家数 + 找领涨股
+            up_count, down_count = 0, 0
+            top_code, top_name, top_change = "", "", 0.0
+            stocks_info = label_constituents.get(label)
+            if stocks_info:
+                for st in stocks_info:
+                    chg = st["changepercent"]
+                    if chg > 0:
+                        up_count += 1
+                    elif chg < 0:
+                        down_count += 1
+                    if chg > top_change:
+                        top_change = chg
+                        top_code = st["code"]
+                        top_name = st["name"]
+            else:
+                # 成分股获取失败，用板块列表的领涨股
+                top_name = str(row.get("股票名称", ""))
+                top_change = _safe_float(row.get("个股-涨跌幅", 0))
+                top_code = name_to_code.get(top_name, "")
+
+            result.append({
+                "name": str(row.get("板块", "")),
+                "avg_change_pct": round(_safe_float(row.get("涨跌幅", 0)), 2),
+                "up_count": up_count,
+                "down_count": down_count,
+                "amount": _safe_float(row.get("总成交额", 0)),
+                "new_high_count": 0,
+                "new_low_count": 0,
+                "top_stocks": [{"代码": top_code, "名称": top_name, "涨跌幅": round(top_change, 2)}],
+            })
+        return result
+    except Exception as e:
+        logger.warning("新浪板块概览失败: %s", e)
+        return None
+
+
+def get_sector_overview() -> list[dict]:
+    """返回各行业板块概览，带5分钟缓存。东方财富优先，失败降级新浪。"""
+    global _sector_overview_cache, _sector_overview_cache_time
+    now = time.time()
+    if _sector_overview_cache and now - _sector_overview_cache_time < 300:
+        return _sector_overview_cache
+
+    result = _build_sector_overview_em() or _build_sector_overview_sina()
+    if result:
         result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
         _sector_overview_cache = result
         _sector_overview_cache_time = now
         return result
-    except Exception as e:
-        logger.warning("API调用失败: %s", e)
-        return _sector_overview_cache or []
+    return _sector_overview_cache or []
 
 
 # ─── 财务数据 ───

@@ -189,3 +189,115 @@ def fetch_nonexistent_etf():
 @then("返回结果包含error字段")
 def verify_etf_not_found():
     assert "error" in _result["detail"]
+
+
+# ─── 同花顺降级筛选 ───
+
+@given("ETF行情来自同花顺备用源，缺失成交量/成交额/换手率字段")
+def etf_ths_degraded_data():
+    _result["etfs"] = [
+        {"代码": "510300", "名称": "沪深300ETF", "最新价": 3.0, "涨跌幅": 5.0, "涨跌额": 0.15,
+         "今开": 3.0, "最高": 3.0, "最低": 3.0, "昨收": 2.85, "买一": 3.0, "卖一": 3.0,
+         "成交量": 0, "成交额": 0, "换手率": 0, "量比": 0, "_type": "etf", "_degraded": True},
+        {"代码": "511010", "名称": "国债ETF", "最新价": 120.5, "涨跌幅": 0.1, "涨跌额": 0.12,
+         "今开": 120.5, "最高": 120.5, "最低": 120.5, "昨收": 120.38, "买一": 120.5, "卖一": 120.5,
+         "成交量": 0, "成交额": 0, "换手率": 0, "量比": 0, "_type": "etf", "_degraded": True},
+    ]
+
+
+@when("我按成交额筛选ETF")
+def filter_etf_by_amount():
+    from app.services.market_data import filter_etf
+    with patch("app.services.market_data.get_etf_spot_data", return_value=_result["etfs"]):
+        _result["filtered"] = filter_etf(min_amount=100000)
+
+
+@then("成交额筛选被跳过，结果包含warning提示")
+def verify_etf_degraded_filter():
+    assert _result["filtered"]["total"] == 2
+    assert "warning" in _result["filtered"]
+    assert "备用数据源" in _result["filtered"]["warning"]
+
+
+# ─── ETF资金流向 ───
+
+@when("我获取510300的资金流向")
+def fetch_etf_fund_flow():
+    from app.services.market_data import get_etf_fund_flow
+    mock_data = [
+        {"date": "2026-05-06", "close": 3.5, "change_pct": 1.0,
+         "main_net": -100000, "main_pct": -2.0, "huge_net": -50000, "huge_pct": -1.0,
+         "big_net": -30000, "big_pct": -0.5, "mid_net": 20000, "mid_pct": 0.3,
+         "small_net": 60000, "small_pct": 1.2},
+    ]
+    with patch("app.services.market_data.ak.stock_individual_fund_flow") as mock_ak:
+        import pandas as pd
+        mock_ak.return_value = pd.DataFrame({
+            "日期": ["2026-05-06"], "收盘价": [3.5], "涨跌幅": [1.0],
+            "主力净流入-净额": [-100000], "主力净流入-净占比": [-2.0],
+            "超大单净流入-净额": [-50000], "超大单净流入-净占比": [-1.0],
+            "大单净流入-净额": [-30000], "大单净流入-净占比": [-0.5],
+            "中单净流入-净额": [20000], "中单净流入-净占比": [0.3],
+            "小单净流入-净额": [60000], "小单净流入-净占比": [1.2],
+        })
+        _result["fundflow"] = get_etf_fund_flow("510300")
+
+
+@then("返回结果包含日期和主力净流入字段")
+def verify_etf_fund_flow():
+    data = _result["fundflow"]
+    assert len(data) >= 1
+    assert "date" in data[0]
+    assert "main_net" in data[0]
+
+
+# ─── ETF净值 ───
+
+@when("我获取510300的净值数据")
+def fetch_etf_nav():
+    from app.services.market_data import get_etf_nav
+    with patch("app.services.market_data.ak.fund_etf_fund_info_em") as mock_ak:
+        import pandas as pd
+        mock_ak.return_value = pd.DataFrame({
+            "净值日期": ["2026-05-06", "2026-05-05"],
+            "单位净值": [3.5, 3.48],
+            "累计净值": [3.5, 3.48],
+            "日增长率": [0.57, -0.29],
+            "申购状态": ["场内买入", "场内买入"],
+            "赎回状态": ["场内卖出", "场内卖出"],
+        })
+        _result["nav"] = get_etf_nav("510300")
+
+
+@then("返回结果包含日期和单位净值字段")
+def verify_etf_nav():
+    data = _result["nav"]
+    assert len(data) >= 1
+    assert "date" in data[0]
+    assert "nav" in data[0]
+
+
+# ─── ETF持仓 ───
+
+@when("我获取510300的持仓数据")
+def fetch_etf_holdings():
+    from app.services.market_data import get_etf_holdings
+    with patch("app.services.market_data.ak.fund_portfolio_hold_em") as mock_ak:
+        import pandas as pd
+        mock_ak.return_value = pd.DataFrame({
+            "序号": [1, 2], "股票代码": ["600519", "300750"],
+            "股票名称": ["贵州茅台", "宁德时代"],
+            "占净值比例": [5.89, 2.78],
+            "持股数": [675.78, 2855.22],
+            "持仓市值": [1150782.02, 542948.18],
+            "季度": ["2026年1季度股票投资明细", "2026年1季度股票投资明细"],
+        })
+        _result["holdings"] = get_etf_holdings("510300")
+
+
+@then("返回结果包含股票代码和占净值比例字段")
+def verify_etf_holdings():
+    data = _result["holdings"]
+    assert len(data) >= 1
+    assert "code" in data[0]
+    assert "ratio" in data[0]

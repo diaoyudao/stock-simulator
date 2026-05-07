@@ -118,6 +118,28 @@ export interface EtfDetail extends EtfItem {
   "52周最高": number;
   "52周最低": number;
   基金类型: string;
+  连涨天数: number;
+  连跌天数: number;
+}
+
+export interface EtfNavItem {
+  date: string;
+  nav: number;
+  acc_nav: number;
+  growth: number;
+}
+
+export interface EtfHoldingItem {
+  code: string;
+  name: string;
+  ratio: number;
+  shares: number;
+  market_value: number;
+}
+
+export interface EtfAllocationData {
+  asset: { type: string; ratio: number }[];
+  industry: { name: string; ratio: number }[];
 }
 
 export interface EtfSpotResult {
@@ -364,6 +386,14 @@ export const api = {
     request<KLineItem[]>(`/etf/history/${code}?period=${period}`),
   getEtfMinute: (code: string, period: string = "1") =>
     request<KLineItem[]>(`/etf/minute/${code}?period=${period}`),
+  getEtfFundFlow: (code: string) =>
+    request<FundFlowItem[]>(`/etf/fund-flow/${code}`),
+  getEtfNav: (code: string) =>
+    request<EtfNavItem[]>(`/etf/nav/${code}`),
+  getEtfHoldings: (code: string) =>
+    request<EtfHoldingItem[]>(`/etf/holdings/${code}`),
+  getEtfAllocation: (code: string) =>
+    request<EtfAllocationData>(`/etf/allocation/${code}`),
 
   // ─── A股行情 ───
   getSpot: (params: Record<string, string | number>) => {

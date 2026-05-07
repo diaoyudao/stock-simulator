@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { api, type StockDetail as StockDetailType, type KLineItem, type Position, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type AIAnalysis, type AIScore } from "../api";
+import { api, type StockDetail as StockDetailType, type KLineItem, type Position, type FinancialAbstract, type FinancialStatement, type StockNews, type IntradayItem, type BidAskData, type FundFlowItem, type AIAnalysis, type AIScore, type EtfNavItem, type EtfHoldingItem, type EtfAllocationData } from "../api";
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type ISeriesApi, ColorType } from "lightweight-charts";
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI, type CandleData } from "../utils/indicators";
 import { fmtAmt, fmtCap, fmt } from "../utils/format";
@@ -89,7 +89,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   const [showAlert, setShowAlert] = useState(false);
   const [alertCondition, setAlertCondition] = useState<"above" | "below">("above");
   const [alertValue, setAlertValue] = useState(0);
-  const [detailTab, setDetailTab] = useState<"kline" | "financial" | "news" | "intraday" | "bidask" | "fundflow" | "ai">("kline");
+  const [detailTab, setDetailTab] = useState<"kline" | "financial" | "news" | "intraday" | "bidask" | "fundflow" | "ai" | "nav" | "holdings">("kline");
   const [finType, setFinType] = useState<"abstract" | "利润表" | "资产负债表" | "现金流量表">("abstract");
   const [financialData, setFinancialData] = useState<FinancialAbstract[] | FinancialStatement[]>([]);
   const [financialError, setFinancialError] = useState("");
@@ -102,6 +102,9 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null);
   const [aiScore, setAiScore] = useState<AIScore | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [etfNavData, setEtfNavData] = useState<EtfNavItem[]>([]);
+  const [etfHoldingsData, setEtfHoldingsData] = useState<EtfHoldingItem[]>([]);
+  const [etfAllocationData, setEtfAllocationData] = useState<EtfAllocationData | null>(null);
 
   const pos = positions.find((p) => p.code === code);
 
@@ -173,9 +176,9 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
   }, [code, detailTab]);
 
   useEffect(() => {
-    if (detailTab !== "fundflow" || !code) return;
+    if (isEtf || detailTab !== "fundflow" || !code) return;
     api.getFundFlow(code).then((d) => setFundFlowData(Array.isArray(d) ? d : [])).catch(() => setFundFlowData([]));
-  }, [code, detailTab]);
+  }, [code, detailTab, isEtf]);
 
   useEffect(() => {
     if (detailTab !== "ai" || !code) return;
@@ -189,6 +192,26 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
       })
       .finally(() => setAiLoading(false));
   }, [code, detailTab]);
+
+  // ETF资金流向
+  useEffect(() => {
+    if (!isEtf || detailTab !== "fundflow" || !code) return;
+    api.getEtfFundFlow(code).then((d) => setFundFlowData(Array.isArray(d) ? d : [])).catch(() => setFundFlowData([]));
+  }, [code, detailTab, isEtf]);
+
+  // ETF净值
+  useEffect(() => {
+    if (!isEtf || detailTab !== "nav" || !code) return;
+    api.getEtfNav(code).then((d) => setEtfNavData(Array.isArray(d) ? d : [])).catch(() => setEtfNavData([]));
+  }, [code, detailTab, isEtf]);
+
+  // ETF持仓+配置
+  useEffect(() => {
+    if (!isEtf || detailTab !== "holdings" || !code) return;
+    Promise.all([api.getEtfHoldings(code), api.getEtfAllocation(code)])
+      .then(([h, a]) => { setEtfHoldingsData(Array.isArray(h) ? h : []); setEtfAllocationData(a); })
+      .catch(() => { setEtfHoldingsData([]); setEtfAllocationData(null); });
+  }, [code, detailTab, isEtf]);
 
   // 图表生命周期
   useEffect(() => {
@@ -434,15 +457,27 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
         <div className="metric"><span className="metric-label">最高</span><span className="metric-value profit">{fmt(detail["最高"])}</span></div>
         <div className="metric"><span className="metric-label">最低</span><span className="metric-value loss">{fmt(detail["最低"])}</span></div>
         <div className="metric"><span className="metric-label">昨收</span><span className="metric-value">{fmt(detail["昨收"])}</span></div>
-        <div className="metric"><span className="metric-label">买一</span><span className="metric-value">{fmt(detail["买一"])}</span></div>
-        <div className="metric"><span className="metric-label">卖一</span><span className="metric-value">{fmt(detail["卖一"])}</span></div>
-        <div className="metric"><span className="metric-label">成交量</span><span className="metric-value">{detail["成交量"] ? (detail["成交量"] / 10000).toFixed(0) + "万" : "-"}</span></div>
-        <div className="metric"><span className="metric-label">成交额</span><span className="metric-value">{fmtCap(detail["成交额"])}</span></div>
-        <div className="metric"><span className="metric-label">换手率</span><span className="metric-value">{fmt(detail["换手率"])}%</span></div>
-        <div className="metric"><span className="metric-label">市盈率</span><span className="metric-value">{fmt(detail["市盈率-动态"])}</span></div>
-        <div className="metric"><span className="metric-label">市净率</span><span className="metric-value">{fmt(detail["市净率"])}</span></div>
-        <div className="metric"><span className="metric-label">总市值</span><span className="metric-value">{fmtCap(detail["总市值"])}</span></div>
-        <div className="metric"><span className="metric-label">流通市值</span><span className="metric-value">{fmtCap(detail["流通市值"])}</span></div>
+        {isEtf ? (
+          <>
+            <div className="metric"><span className="metric-label">基金类型</span><span className="metric-value">{(detail as any)["基金类型"] || "-"}</span></div>
+            <div className="metric"><span className="metric-label">52周最高</span><span className="metric-value">{fmt((detail as any)["52周最高"])}</span></div>
+            <div className="metric"><span className="metric-label">52周最低</span><span className="metric-value">{fmt((detail as any)["52周最低"])}</span></div>
+            <div className="metric"><span className="metric-label">连涨</span><span className="metric-value">{(detail as any)["连涨天数"] || 0}天</span></div>
+            <div className="metric"><span className="metric-label">连跌</span><span className="metric-value">{(detail as any)["连跌天数"] || 0}天</span></div>
+          </>
+        ) : (
+          <>
+            <div className="metric"><span className="metric-label">买一</span><span className="metric-value">{fmt(detail["买一"])}</span></div>
+            <div className="metric"><span className="metric-label">卖一</span><span className="metric-value">{fmt(detail["卖一"])}</span></div>
+            <div className="metric"><span className="metric-label">成交量</span><span className="metric-value">{detail["成交量"] ? (detail["成交量"] / 10000).toFixed(0) + "万" : "-"}</span></div>
+            <div className="metric"><span className="metric-label">成交额</span><span className="metric-value">{fmtCap(detail["成交额"])}</span></div>
+            <div className="metric"><span className="metric-label">换手率</span><span className="metric-value">{fmt(detail["换手率"])}%</span></div>
+            <div className="metric"><span className="metric-label">市盈率</span><span className="metric-value">{fmt(detail["市盈率-动态"])}</span></div>
+            <div className="metric"><span className="metric-label">市净率</span><span className="metric-value">{fmt(detail["市净率"])}</span></div>
+            <div className="metric"><span className="metric-label">总市值</span><span className="metric-value">{fmtCap(detail["总市值"])}</span></div>
+            <div className="metric"><span className="metric-label">流通市值</span><span className="metric-value">{fmtCap(detail["流通市值"])}</span></div>
+          </>
+        )}
       </div>
 
       {/* Detail sub-tabs */}
@@ -450,11 +485,11 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
         <div className="chart-toolbar">
           <div className="period-tabs detail-main-tabs">
             {(isEtf
-              ? (["kline"] as const)
+              ? (["kline", "fundflow", "nav", "holdings", "ai"] as const)
               : (["kline", "intraday", "bidask", "fundflow", "financial", "news", "ai"] as const)
             ).map((t) => (
               <button key={t} className={detailTab === t ? "tab active" : "tab"} onClick={() => setDetailTab(t as any)}>
-                {t === "kline" ? "K线" : t === "intraday" ? "分时" : t === "bidask" ? "盘口" : t === "fundflow" ? "资金" : t === "financial" ? "财务" : t === "ai" ? "AI分析" : "资讯"}
+                {t === "kline" ? "K线" : t === "intraday" ? "分时" : t === "bidask" ? "盘口" : t === "fundflow" ? "资金" : t === "financial" ? "财务" : t === "ai" ? "AI分析" : t === "nav" ? "净值" : t === "holdings" ? "持仓" : "资讯"}
               </button>
             ))}
           </div>
@@ -726,6 +761,84 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
                 )}
                 <div className="ai-disclaimer">{aiAnalysis?.disclaimer || aiScore?.disclaimer || "AI分析仅供参考，不构成投资建议"}</div>
               </>
+            )}
+          </div>
+        )}
+
+        {detailTab === "nav" && isEtf && (
+          <div className="nav-content">
+            {etfNavData.length === 0 ? (
+              <div className="data-error"><span className="error-icon">!</span><span>净值数据加载失败</span></div>
+            ) : (
+              <table className="stock-table">
+                <thead>
+                  <tr><th>日期</th><th>单位净值</th><th>累计净值</th><th>日增长率</th></tr>
+                </thead>
+                <tbody>
+                  {etfNavData.slice(0, 30).map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.date}</td>
+                      <td>{r.nav.toFixed(4)}</td>
+                      <td>{r.acc_nav.toFixed(4)}</td>
+                      <td className={r.growth >= 0 ? "profit" : "loss"}>{r.growth >= 0 ? "+" : ""}{r.growth.toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {detailTab === "holdings" && isEtf && (
+          <div className="holdings-content">
+            {etfAllocationData && etfAllocationData.asset.length > 0 && (
+              <div className="allocation-section">
+                <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>资产配置</h4>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {etfAllocationData.asset.map((a, i) => (
+                    <div key={i} className="metric" style={{ flex: "1 1 80px" }}>
+                      <span className="metric-label">{a.type}</span>
+                      <span className="metric-value">{a.ratio.toFixed(2)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {etfAllocationData && etfAllocationData.industry.length > 0 && (
+              <div className="allocation-section">
+                <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>行业配置</h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {etfAllocationData.industry.map((ind, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ color: "#8b949e", width: 80, fontSize: 12 }}>{ind.name}</span>
+                      <div style={{ flex: 1, height: 14, background: "#21262d", borderRadius: 2 }}>
+                        <div style={{ width: `${Math.min(ind.ratio, 100)}%`, height: "100%", background: "#58a6ff", borderRadius: 2 }} />
+                      </div>
+                      <span style={{ color: "#c9d1d9", fontSize: 12, width: 50 }}>{ind.ratio.toFixed(2)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>十大持仓</h4>
+            {etfHoldingsData.length === 0 ? (
+              <div className="data-error"><span className="error-icon">!</span><span>持仓数据加载失败</span></div>
+            ) : (
+              <table className="stock-table">
+                <thead>
+                  <tr><th>代码</th><th>名称</th><th>占净值比</th><th>持仓市值</th></tr>
+                </thead>
+                <tbody>
+                  {etfHoldingsData.map((h, i) => (
+                    <tr key={i}>
+                      <td>{h.code}</td>
+                      <td>{h.name}</td>
+                      <td>{h.ratio.toFixed(2)}%</td>
+                      <td>{fmtCap(h.market_value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}

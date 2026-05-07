@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Query
-from app.services.market_data import filter_etf, get_etf_detail, get_etf_history, get_etf_minute_history
+from app.services.market_data import (
+    filter_etf, get_etf_detail, get_etf_history, get_etf_minute_history,
+    get_etf_fund_flow, get_etf_nav, get_etf_holdings, get_etf_allocation,
+)
 from app.utils import validate_code
 
 router = APIRouter()
@@ -57,3 +60,31 @@ async def minute(code: str, period: str = Query("1")):
     if period not in valid:
         period = "1"
     return get_etf_minute_history(code, period)
+
+
+@router.get("/fund-flow/{code}")
+async def fund_flow(code: str):
+    """ETF资金流向。"""
+    validate_code(code)
+    return get_etf_fund_flow(code)
+
+
+@router.get("/nav/{code}")
+async def nav(code: str):
+    """ETF历史净值。"""
+    validate_code(code)
+    return get_etf_nav(code)
+
+
+@router.get("/holdings/{code}")
+async def holdings(code: str):
+    """ETF十大持仓。"""
+    validate_code(code)
+    return get_etf_holdings(code)
+
+
+@router.get("/allocation/{code}")
+async def allocation(code: str):
+    """ETF资产/行业配置。"""
+    validate_code(code)
+    return get_etf_allocation(code)

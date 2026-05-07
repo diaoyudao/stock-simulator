@@ -11,6 +11,7 @@ from app.services.market_data import (
     get_stock_by_code, get_stock_history, get_fund_flow,
     get_financial_abstract, get_stock_news, BoundedCache,
     _safe_float, compute_consecutive_days, _all_caches,
+    get_etf_by_code, get_etf_history, get_etf_fund_flow,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,32 +48,65 @@ _all_caches.append((_score_cache, CACHE_TIMEOUT))
 DISCLAIMER = "AI分析仅供参考，不构成投资建议，投资有风险，入市需谨慎。"
 
 
+def _get_stock_or_etf(code: str) -> tuple[dict, bool]:
+    """获取股票或ETF数据。返回 (data, is_etf)。"""
+    s = get_stock_by_code(code)
+    if s:
+        return s, False
+    s = get_etf_by_code(code)
+    if s:
+        return s, True
+    return {}, False
+
+
 def _build_analysis_prompt(code: str) -> str:
-    """构建LLM分析的prompt，聚合多维度数据。"""
-    # 行情数据
-    stock = get_stock_by_code(code)
+    """构建LLM分析的prompt，聚合多维度数据。支持A股和ETF。"""
+    stock, is_etf = _get_stock_or_etf(code)
     if not stock:
         return ""
 
     price = stock.get("最新价", 0)
     change_pct = stock.get("涨跌幅", 0)
+    name = stock.get("名称", code)
+    amount = stock.get("成交额", 0)
+
+    if is_etf:
+        from app.services.market_data import _compute_etf_consecutive
+        consec = _compute_etf_consecutive(code)
+        fund_flow = get_etf_fund_flow(code)
+        fund_summary = ""
+        for f in fund_flow[:5]:
+            fund_summary += f"  {f.get('date', '')}: 主力净流入{_safe_float(f.get('main_net')):.0f}, 超大单{_safe_float(f.get('huge_net')):.0f}\n"
+        etf_type = stock.get("_type_name", "其他")
+        prompt = f"""你是一位专业的基金分析师。请根据以下数据对ETF {name}({code})进行综合分析:
+
+【基本行情】最新价: {price}, 涨跌幅: {change_pct}%, 成交额: {amount/1e4:.0f}万
+【基金类型】{etf_type}
+【连涨连跌】连涨{consec['连涨天数']}天, 连跌{consec['连跌天数']}天
+【资金流向（近5日）】
+{fund_summary if fund_summary else "  暂无数据"}
+
+请从以下维度给出简洁专业的分析（每项2-3句话）:
+1. 技术面分析（趋势/支撑压力/指标信号）
+2. 基本面评估（基金类型/跟踪指数/配置价值）
+3. 资金面判断（主力动向）
+4. 风险提示
+5. 综合评分（1-10分，10分最看好）
+
+请用JSON格式回复:
+{{"technical": "技术面分析...", "fundamental": "基本面评估...", "capital": "资金面判断...", "risk": "风险提示...", "score": 7}}"""
+        return prompt
+
+    # A股逻辑
     turnover = stock.get("换手率", 0)
     pe = stock.get("市盈率-动态", 0)
     pb = stock.get("市净率", 0)
     mktcap = stock.get("总市值", 0)
-    amount = stock.get("成交额", 0)
-    name = stock.get("名称", code)
-
-    # 连涨跌
     consec = compute_consecutive_days(code)
-
-    # 资金流向（取最近5日）
     fund_flow = get_fund_flow(code)
     fund_summary = ""
     for f in fund_flow[:5]:
         fund_summary += f"  {f.get('date', '')}: 主力净流入{_safe_float(f.get('main_net')):.0f}万, 超大单{_safe_float(f.get('huge_net')):.0f}万\n"
-
-    # 财务摘要（最近2期）
     financial = get_financial_abstract(code)
     fin_summary = ""
     for f in financial[:2]:
@@ -81,8 +115,6 @@ def _build_analysis_prompt(code: str) -> str:
             if k not in ("报告期", "日期"):
                 fin_summary += f"{k}={v} "
         fin_summary += "\n"
-
-    # 新闻（最近5条）
     news = get_stock_news(code)
     news_summary = ""
     for n in news[:5]:
@@ -127,7 +159,7 @@ async def get_ai_analysis(code: str) -> dict:
 
     prompt = _build_analysis_prompt(code)
     if not prompt:
-        return {"error": "股票数据不存在", "disclaimer": DISCLAIMER}
+        return {"error": "数据不存在", "disclaimer": DISCLAIMER}
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -197,14 +229,14 @@ async def get_ai_score(code: str) -> dict:
 
 
 def _compute_score(code: str) -> dict:
-    """同步评分计算逻辑。"""
-    stock = get_stock_by_code(code)
+    """同步评分计算逻辑。支持A股和ETF。"""
+    stock, is_etf = _get_stock_or_etf(code)
     if not stock:
-        return {"error": "股票不存在"}
+        return {"error": "股票/ETF不存在"}
 
     # ─── 技术面评分 ───
     tech_score = 50  # 基准分
-    klines = get_stock_history(code, "daily")
+    klines = get_etf_history(code, "daily") if is_etf else get_stock_history(code, "daily")
     if len(klines) >= 20:
         closes = [float(k["close"]) for k in klines[-20:]]
         ma5 = sum(closes[-5:]) / 5
@@ -250,32 +282,36 @@ def _compute_score(code: str) -> dict:
 
     # ─── 基本面评分 ───
     fund_score = 50
-    pe = stock.get("市盈率-动态", 0)
-    pb = stock.get("市净率", 0)
-    mktcap = stock.get("总市值", 0)
-
-    # PE评估（低价股PE通常偏高，给出合理区间）
-    if 0 < pe < 20:
-        fund_score += 15
-    elif 20 <= pe < 50:
-        fund_score += 5
-    elif pe < 0:
-        fund_score -= 10  # 亏损
-
-    # PB评估
-    if 0 < pb < 1:
-        fund_score += 10  # 破净
-    elif 1 <= pb < 3:
-        fund_score += 5
-
-    # 小市值加分（低价股策略偏好）
-    if 0 < mktcap < 50e8:
-        fund_score += 5
+    if is_etf:
+        # ETF基本面：基金类型、跟踪指数表现
+        fund_type = stock.get("_type_name", "其他")
+        if fund_type in ("指数", "跨境"):
+            fund_score += 10
+        elif fund_type == "债券":
+            fund_score += 15
+        elif fund_type == "商品":
+            fund_score += 5
+    else:
+        pe = stock.get("市盈率-动态", 0)
+        pb = stock.get("市净率", 0)
+        mktcap = stock.get("总市值", 0)
+        if 0 < pe < 20:
+            fund_score += 15
+        elif 20 <= pe < 50:
+            fund_score += 5
+        elif pe < 0:
+            fund_score -= 10
+        if 0 < pb < 1:
+            fund_score += 10
+        elif 1 <= pb < 3:
+            fund_score += 5
+        if 0 < mktcap < 50e8:
+            fund_score += 5
 
     # ─── 资金面评分 + 详情 ───
     capital_score = 50
     capital_detail = None
-    fund_flow = get_fund_flow(code)
+    fund_flow = get_etf_fund_flow(code) if is_etf else get_fund_flow(code)
     if fund_flow:
         recent = fund_flow[:3] if len(fund_flow) >= 3 else fund_flow
         main_net = sum(_safe_float(f.get("main_net", 0)) for f in recent)
@@ -303,9 +339,6 @@ def _compute_score(code: str) -> dict:
         d_small_net = _safe_float(d.get("small_net", 0))
         d_small_pct = _safe_float(d.get("small_pct", 0))
 
-        # 主力 = 超大单 + 大单，散户 = 中单 + 小单
-        # 买入占比估算: 净占比 = 买入% - 卖出%，总占比 = 买入% + 卖出%
-        # 主力买入占比 ≈ 50 + main_pct/2（基于净占比推算）
         capital_detail = {
             "date": d.get("date", ""),
             "main_net": d_main_net,

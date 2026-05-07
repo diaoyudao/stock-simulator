@@ -577,16 +577,7 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
         df = ak.stock_zh_a_hist(symbol=code, period=ak_period, start_date=start_date, adjust="qfq")
         if df is None or df.empty:
             return []
-        data = []
-        for _, row in df.iterrows():
-            data.append({
-                "day": str(row["日期"]),
-                "open": str(row["开盘"]),
-                "high": str(row["最高"]),
-                "low": str(row["最低"]),
-                "close": str(row["收盘"]),
-                "volume": str(row["成交量"]),
-            })
+        data = _convert_kline_common(df)
         _kline_cache[cache_key] = (now, data)
         return data
     except Exception as e:
@@ -953,16 +944,155 @@ def _convert_etf_spot_em(df) -> list[dict]:
     return result
 
 
-def _fetch_all_etf() -> list[dict]:
-    """获取全市场ETF实时行情。东方财富优先，失败返回旧缓存。"""
-    global _etf_cached
+def _convert_etf_spot_ths(df) -> list[dict]:
+    """将 ak.fund_etf_spot_ths() 的 DataFrame 转为统一中文 key 格式。
+    同花顺源缺失成交量/成交额/买卖盘等实时交易字段，标记 _degraded。"""
+    result = []
+    for _, row in df.iterrows():
+        nav = _safe_float(row.get("当前-单位净值", 0))
+        prev_nav = _safe_float(row.get("前一日-单位净值", 0))
+        result.append({
+            "代码": str(row.get("基金代码", "")),
+            "名称": str(row.get("基金名称", "")),
+            "最新价": nav,
+            "涨跌额": _safe_float(row.get("增长值", 0)),
+            "涨跌幅": _safe_float(row.get("增长率", 0)),
+            "今开": nav,
+            "最高": nav,
+            "最低": nav,
+            "昨收": prev_nav,
+            "买一": nav,
+            "卖一": nav,
+            "成交量": 0,
+            "成交额": 0,
+            "换手率": 0,
+            "量比": 0,
+            "_type": "etf",
+            "_degraded": True,
+        })
+    return result
+
+
+def _fetch_etf_sina_batch(codes: list[str]) -> list[dict]:
+    """通过新浪行情接口批量获取ETF实时行情。分批80只，并行请求，总耗时<1秒。"""
+    import requests as _req
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    chunk_size = 80
+    chunks = [codes[i:i + chunk_size] for i in range(0, len(codes), chunk_size)]
+
+    def _fetch_chunk(batch: list[str]) -> list[dict]:
+        try:
+            url = f"https://hq.sinajs.cn/list={','.join(batch)}"
+            r = _req.get(url, headers={
+                "Referer": "https://finance.sina.com.cn/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }, timeout=10)
+            r.encoding = "gbk"
+            chunk_result = []
+            for line in r.text.strip().split("\n"):
+                if '="' not in line:
+                    continue
+                raw_code = line.split("=")[0].split("_")[-1]
+                code = raw_code[2:] if raw_code.startswith(("sh", "sz")) else raw_code
+                val = line.split('"')[1] if '"' in line else ""
+                if not val:
+                    continue
+                fields = val.split(",")
+                if len(fields) < 32 or not fields[3]:
+                    continue
+                price = _safe_float(fields[3])
+                yesterday = _safe_float(fields[2])
+                chunk_result.append({
+                    "代码": code,
+                    "名称": fields[0],
+                    "最新价": price,
+                    "涨跌额": round(price - yesterday, 4) if yesterday else 0,
+                    "涨跌幅": round((price - yesterday) / yesterday * 100, 2) if yesterday else 0,
+                    "今开": _safe_float(fields[1]),
+                    "最高": _safe_float(fields[4]),
+                    "最低": _safe_float(fields[5]),
+                    "昨收": yesterday,
+                    "买一": _safe_float(fields[6]) or price,
+                    "卖一": _safe_float(fields[7]) or price,
+                    "成交量": int(_safe_float(fields[8])),
+                    "成交额": _safe_float(fields[9]),
+                    "换手率": 0,
+                    "量比": 0,
+                    "_type": "etf",
+                })
+            return chunk_result
+        except Exception as e:
+            logger.warning("新浪ETF行情批次失败: %s", e)
+            return []
+
+    result = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [pool.submit(_fetch_chunk, c) for c in chunks]
+        for f in as_completed(futures):
+            result.extend(f.result())
+    return result
+
+
+_etf_code_list: list[str] = []
+_etf_code_list_time: float = 0
+_em_fail_time: float = 0  # 东方财富失败时间戳，5分钟内跳过
+
+
+def _fetch_etf_codes_from_ths() -> list[str]:
+    """从同花顺获取ETF代码列表，带30分钟缓存。"""
+    global _etf_code_list, _etf_code_list_time
+    now = time.time()
+    if _etf_code_list and now - _etf_code_list_time < 1800:
+        return _etf_code_list
     try:
-        df = ak.fund_etf_spot_em()
+        df = ak.fund_etf_spot_ths()
         if df is not None and not df.empty:
-            return _convert_etf_spot_em(df)
+            codes = []
+            for code in df["基金代码"].astype(str):
+                prefix = "sh" if code.startswith("5") else "sz"
+                codes.append(f"{prefix}{code}")
+            _etf_code_list = codes
+            _etf_code_list_time = now
+            return codes
     except Exception as e:
-        logger.warning("东方财富ETF行情API失败: %s", e)
-    logger.warning("ETF行情API失败，使用旧缓存(%d条)", len(_etf_cached))
+        logger.warning("THS ETF代码列表获取失败: %s", e)
+    return _etf_code_list  # 返回旧缓存
+
+
+def _fetch_all_etf() -> list[dict]:
+    """获取全市场ETF实时行情。新浪批量优先，东方财富备用（失败5分钟跳过），THS净值兜底。"""
+    global _etf_cached, _em_fail_time
+    now = time.time()
+    # 新浪批量实时行情（优先，快速稳定）
+    try:
+        codes = _fetch_etf_codes_from_ths()
+        if codes:
+            data = _fetch_etf_sina_batch(codes)
+            if data:
+                logger.info("使用新浪ETF实时行情接口，%d条", len(data))
+                return data
+    except Exception as e:
+        logger.warning("新浪ETF行情接口失败: %s", e)
+    # 东方财富（失败后5分钟内跳过）
+    if now - _em_fail_time > 300:
+        try:
+            df = ak.fund_etf_spot_em()
+            if df is not None and not df.empty:
+                _em_fail_time = 0
+                return _convert_etf_spot_em(df)
+        except Exception as e:
+            _em_fail_time = now
+            logger.warning("东方财富ETF行情API失败: %s", e)
+    # THS净值兜底
+    try:
+        df = ak.fund_etf_spot_ths()
+        if df is not None and not df.empty:
+            logger.info("使用同花顺ETF净值兜底接口，%d条", len(df))
+            return _convert_etf_spot_ths(df)
+    except Exception as e:
+        logger.warning("同花顺ETF行情API失败: %s", e)
+    logger.warning("所有ETF行情API失败，使用旧缓存(%d条)", len(_etf_cached))
     return _etf_cached
 
 
@@ -1052,6 +1182,7 @@ def filter_etf(
 ) -> dict:
     """筛选ETF，返回分页结果。"""
     stocks = get_etf_spot_data()
+    degraded = any(s.get("_degraded") for s in stocks)
 
     # ETF类型关键词映射
     type_keywords: dict[str, list[str]] = {
@@ -1070,7 +1201,7 @@ def filter_etf(
             continue
         if max_change_pct is not None and s["涨跌幅"] > max_change_pct:
             continue
-        if min_amount is not None and s["成交额"] < min_amount:
+        if min_amount is not None and not degraded and s["成交额"] < min_amount:
             continue
         if etf_type and etf_type in type_keywords:
             keywords = type_keywords[etf_type]
@@ -1089,13 +1220,17 @@ def filter_etf(
     page_items = filtered[start:end]
     for s in page_items:
         s.pop("_type", None)
+        s.pop("_degraded", None)
 
-    return {
+    result: dict = {
         "total": total,
         "page": page,
         "page_size": page_size,
         "items": page_items,
     }
+    if degraded:
+        result["warning"] = "备用数据源(同花顺净值)，成交额/换手率/量比不可用"
+    return result
 
 
 # ─── ETF K线 + 详情 ───
@@ -1106,6 +1241,28 @@ _etf_52week_cache: BoundedCache = _register_cache(BoundedCache(512), 300)
 _etf_52week_cache_timeout = 300
 
 
+def _compute_etf_consecutive(code: str) -> dict:
+    """计算ETF连涨/连跌天数。"""
+    klines = get_etf_history(code, "daily")
+    if not klines:
+        return {"连涨天数": 0, "连跌天数": 0}
+    up_days = 0
+    down_days = 0
+    for k in reversed(klines):
+        change = float(k["close"]) - float(k["open"])
+        if change > 0:
+            if down_days > 0:
+                break
+            up_days += 1
+        elif change < 0:
+            if up_days > 0:
+                break
+            down_days += 1
+        else:
+            break
+    return {"连涨天数": up_days, "连跌天数": down_days}
+
+
 def _compute_etf_52week(code: str) -> tuple[float, float]:
     """从ETF日K线计算52周最高/最低，缓存5分钟。"""
     now = time.time()
@@ -1114,12 +1271,15 @@ def _compute_etf_52week(code: str) -> tuple[float, float]:
         if now - ts < _etf_52week_cache_timeout:
             return high, low
     try:
-        start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
-        df = ak.fund_etf_hist_em(symbol=code, period="daily", start_date=start, adjust="qfq")
-        if df is None or df.empty:
+        klines = get_etf_history(code, "daily")
+        if not klines:
             return 0.0, 0.0
-        high52 = float(df["最高"].max())
-        low52 = float(df["最低"].min())
+        highs = [float(k["high"]) for k in klines if k.get("high")]
+        lows = [float(k["low"]) for k in klines if k.get("low")]
+        if not highs or not lows:
+            return 0.0, 0.0
+        high52 = max(highs)
+        low52 = min(lows)
         _etf_52week_cache[code] = (now, high52, low52)
         return high52, low52
     except Exception as e:
@@ -1127,23 +1287,49 @@ def _compute_etf_52week(code: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
+def _convert_kline_common(df, col_map: dict | None = None) -> list[dict]:
+    """通用K线DataFrame转换。col_map 可覆盖列名映射，默认适配东方财富格式。"""
+    m = col_map or {"日期": "day", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"}
+    result = []
+    for _, row in df.iterrows():
+        item = {}
+        for src, dst in m.items():
+            item[dst] = str(row.get(src, 0))
+        result.append(item)
+    return result
+
+
 def get_etf_history(code: str, period: str = "daily") -> list[dict]:
-    """获取ETF K线数据，缓存60秒。"""
+    """获取ETF K线数据，缓存60秒。东方财富优先，新浪备用。"""
     now = time.time()
     key = f"{code}_{period}"
     if key in _etf_kline_cache:
         ts, data = _etf_kline_cache[key]
         if now - ts < _etf_kline_cache_timeout:
             return data
+    em_col_map = {"日期": "day", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"}
+    sina_col_map = {"date": "day", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}
+    # 东方财富
     try:
         start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
         df = ak.fund_etf_hist_em(symbol=code, period=period, start_date=start, adjust="qfq")
-        if df is None or df.empty:
-            return []
-        return _convert_kline(df)
+        if df is not None and not df.empty:
+            data = _convert_kline_common(df, em_col_map)
+            _etf_kline_cache[key] = (now, data)
+            return data
     except Exception as e:
-        logger.warning("ETF K线获取失败(%s): %s", code, e)
-        return []
+        logger.warning("东方财富ETF K线失败(%s): %s", code, e)
+    # 新浪备用（仅日线）
+    try:
+        prefix = _sz_sh_prefix(code)
+        df = ak.fund_etf_hist_sina(symbol=f"{prefix}{code}")
+        if df is not None and not df.empty:
+            data = _convert_kline_common(df, sina_col_map)
+            _etf_kline_cache[key] = (now, data)
+            return data
+    except Exception as e:
+        logger.warning("新浪ETF K线失败(%s): %s", code, e)
+    return []
 
 
 def get_etf_minute_history(code: str, period: str = "1") -> list[dict]:
@@ -1154,14 +1340,16 @@ def get_etf_minute_history(code: str, period: str = "1") -> list[dict]:
         ts, data = _etf_kline_cache[key]
         if now - ts < _etf_kline_cache_timeout:
             return data
+    col_map = {"时间": "day", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"}
     try:
         df = ak.fund_etf_hist_min_em(symbol=code, period=period, adjust="")
-        if df is None or df.empty:
-            return []
-        return _convert_kline(df)
+        if df is not None and not df.empty:
+            data = _convert_kline_common(df, col_map)
+            _etf_kline_cache[key] = (now, data)
+            return data
     except Exception as e:
         logger.warning("ETF分钟K线获取失败(%s): %s", code, e)
-        return []
+    return []
 
 
 def get_etf_detail(code: str) -> dict:
@@ -1172,6 +1360,7 @@ def get_etf_detail(code: str) -> dict:
     s = dict(s)
 
     f_52week = _executor.submit(_compute_etf_52week, code)
+    f_consec = _executor.submit(_compute_etf_consecutive, code)
     try:
         high52, low52 = f_52week.result(timeout=15)
         s["52周最高"] = high52
@@ -1179,6 +1368,13 @@ def get_etf_detail(code: str) -> dict:
     except Exception:
         s["52周最高"] = 0.0
         s["52周最低"] = 0.0
+    try:
+        consec = f_consec.result(timeout=15)
+        s["连涨天数"] = consec.get("连涨天数", 0)
+        s["连跌天数"] = consec.get("连跌天数", 0)
+    except Exception:
+        s["连涨天数"] = 0
+        s["连跌天数"] = 0
 
     # 推断基金类型
     type_keywords = {
@@ -1196,6 +1392,158 @@ def get_etf_detail(code: str) -> dict:
 
     s.pop("_type", None)
     return s
+
+
+# ─── ETF专属数据 ───
+
+_etf_fund_flow_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
+_etf_fund_flow_cache_timeout = 300
+
+_etf_nav_cache: BoundedCache = _register_cache(BoundedCache(256), 300)
+_etf_nav_cache_timeout = 300
+
+_etf_holdings_cache: BoundedCache = _register_cache(BoundedCache(256), 1800)
+_etf_holdings_cache_timeout = 1800
+
+_etf_allocation_cache: BoundedCache = _register_cache(BoundedCache(256), 1800)
+_etf_allocation_cache_timeout = 1800
+
+
+def get_etf_fund_flow(code: str) -> list[dict]:
+    """获取ETF资金流向（每日），缓存5分钟。复用A股接口，ETF通用。"""
+    cache_key = f"etf_fundflow:{code}"
+    now = time.time()
+    if cache_key in _etf_fund_flow_cache:
+        ts, data = _etf_fund_flow_cache[cache_key]
+        if now - ts < _etf_fund_flow_cache_timeout:
+            return data
+    try:
+        market = _sz_sh_prefix(code)
+        df = ak.stock_individual_fund_flow(stock=code, market=market)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "date": str(row.iloc[0]),
+                "close": _safe_float(row.iloc[1]),
+                "change_pct": _safe_float(row.iloc[2]),
+                "main_net": _safe_float(row.iloc[3]),
+                "main_pct": _safe_float(row.iloc[4]),
+                "huge_net": _safe_float(row.iloc[5]),
+                "huge_pct": _safe_float(row.iloc[6]),
+                "big_net": _safe_float(row.iloc[7]),
+                "big_pct": _safe_float(row.iloc[8]),
+                "mid_net": _safe_float(row.iloc[9]),
+                "mid_pct": _safe_float(row.iloc[10]),
+                "small_net": _safe_float(row.iloc[11]),
+                "small_pct": _safe_float(row.iloc[12]),
+            })
+        result.reverse()
+        _etf_fund_flow_cache[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.warning("ETF资金流向获取失败(%s): %s", code, e)
+        return []
+
+
+def get_etf_nav(code: str) -> list[dict]:
+    """获取ETF历史净值，缓存5分钟。"""
+    cache_key = f"etf_nav:{code}"
+    now = time.time()
+    if cache_key in _etf_nav_cache:
+        ts, data = _etf_nav_cache[cache_key]
+        if now - ts < _etf_nav_cache_timeout:
+            return data
+    try:
+        start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+        end = datetime.now().strftime("%Y%m%d")
+        df = ak.fund_etf_fund_info_em(fund=code, start_date=start, end_date=end)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "date": str(row["净值日期"]),
+                "nav": _safe_float(row["单位净值"]),
+                "acc_nav": _safe_float(row["累计净值"]),
+                "growth": _safe_float(row["日增长率"]),
+            })
+        _etf_nav_cache[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.warning("ETF净值获取失败(%s): %s", code, e)
+        return []
+
+
+def get_etf_holdings(code: str) -> list[dict]:
+    """获取ETF十大持仓，缓存30分钟。"""
+    cache_key = f"etf_holdings:{code}"
+    now = time.time()
+    if cache_key in _etf_holdings_cache:
+        ts, data = _etf_holdings_cache[cache_key]
+        if now - ts < _etf_holdings_cache_timeout:
+            return data
+    try:
+        year = str(datetime.now().year)
+        df = ak.fund_portfolio_hold_em(symbol=code, date=year)
+        if df is None or df.empty:
+            return []
+        # 取最新季度前10
+        latest_quarter = df["季度"].iloc[0] if "季度" in df.columns else None
+        if latest_quarter:
+            df = df[df["季度"] == latest_quarter].head(10)
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "code": str(row.get("股票代码", "")),
+                "name": str(row.get("股票名称", "")),
+                "ratio": _safe_float(row.get("占净值比例", 0)),
+                "shares": _safe_float(row.get("持股数", 0)),
+                "market_value": _safe_float(row.get("持仓市值", 0)),
+            })
+        _etf_holdings_cache[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.warning("ETF持仓获取失败(%s): %s", code, e)
+        return []
+
+
+def get_etf_allocation(code: str) -> dict:
+    """获取ETF资产配置+行业配置，缓存30分钟。"""
+    cache_key = f"etf_allocation:{code}"
+    now = time.time()
+    if cache_key in _etf_allocation_cache:
+        ts, data = _etf_allocation_cache[cache_key]
+        if now - ts < _etf_allocation_cache_timeout:
+            return data
+    result: dict = {"asset": [], "industry": []}
+    # 资产配置
+    try:
+        df = ak.fund_individual_detail_hold_xq(symbol=code)
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                result["asset"].append({
+                    "type": str(row.get("资产类型", "")),
+                    "ratio": _safe_float(row.get("仓位占比", 0)),
+                })
+    except Exception as e:
+        logger.warning("ETF资产配置获取失败(%s): %s", code, e)
+    # 行业配置
+    try:
+        year = str(datetime.now().year)
+        df2 = ak.fund_portfolio_industry_allocation_em(symbol=code, date=year)
+        if df2 is not None and not df2.empty:
+            for _, row in df2.head(10).iterrows():
+                result["industry"].append({
+                    "name": str(row.get("行业类别", "")),
+                    "ratio": _safe_float(row.get("占净值比例", 0)),
+                })
+    except Exception as e:
+        logger.warning("ETF行业配置获取失败(%s): %s", code, e)
+    if result["asset"] or result["industry"]:
+        _etf_allocation_cache[cache_key] = (now, result)
+    return result
 
 
 # ─── 财务数据 ───
@@ -1435,8 +1783,8 @@ _fund_flow_cache_timeout = 300
 
 
 def _sz_sh_prefix(code: str) -> str:
-    """返回 sz/sh 前缀。"""
-    return "sh" if code.startswith(("6", "9")) else "sz"
+    """返回 sz/sh 前缀。6/9/5开头→sh，其余→sz。"""
+    return "sh" if code.startswith(("6", "9", "5")) else "sz"
 
 
 def get_fund_flow(code: str) -> list[dict]:

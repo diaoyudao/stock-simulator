@@ -793,10 +793,10 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
           <div className="holdings-content">
             {etfAllocationData && etfAllocationData.asset.length > 0 && (
               <div className="allocation-section">
-                <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>资产配置</h4>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <h4 className="allocation-title">资产配置</h4>
+                <div className="asset-grid">
                   {etfAllocationData.asset.map((a, i) => (
-                    <div key={i} className="metric" style={{ flex: "1 1 80px" }}>
+                    <div key={i} className="metric asset-item">
                       <span className="metric-label">{a.type}</span>
                       <span className="metric-value">{a.ratio.toFixed(2)}%</span>
                     </div>
@@ -806,21 +806,21 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
             )}
             {etfAllocationData && etfAllocationData.industry.length > 0 && (
               <div className="allocation-section">
-                <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>行业配置</h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <h4 className="allocation-title">行业配置</h4>
+                <div className="industry-list">
                   {etfAllocationData.industry.map((ind, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ color: "#8b949e", width: 80, fontSize: 12 }}>{ind.name}</span>
-                      <div style={{ flex: 1, height: 14, background: "#21262d", borderRadius: 2 }}>
-                        <div style={{ width: `${Math.min(ind.ratio, 100)}%`, height: "100%", background: "#58a6ff", borderRadius: 2 }} />
+                    <div key={i} className="industry-item">
+                      <span className="industry-name">{ind.name}</span>
+                      <div className="industry-bar-bg">
+                        <div className="industry-bar-fill" style={{ width: `${Math.min(ind.ratio, 100)}%` }} />
                       </div>
-                      <span style={{ color: "#c9d1d9", fontSize: 12, width: 50 }}>{ind.ratio.toFixed(2)}%</span>
+                      <span className="industry-pct">{ind.ratio.toFixed(2)}%</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-            <h4 style={{ color: "#c9d1d9", margin: "8px 0 4px" }}>十大持仓</h4>
+            <h4 className="allocation-title">十大持仓</h4>
             {etfHoldingsData.length === 0 ? (
               <div className="data-error"><span className="error-icon">!</span><span>持仓数据加载失败</span></div>
             ) : (

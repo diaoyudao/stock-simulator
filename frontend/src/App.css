@@ -775,6 +775,77 @@ body {
   padding: 6px 8px;
 }
 
+/* ETF NAV & Holdings */
+.nav-content {
+  padding: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.holdings-content {
+  padding: 12px;
+}
+
+.allocation-section {
+  margin-bottom: 12px;
+}
+
+.allocation-title {
+  color: #c9d1d9;
+  margin: 8px 0 4px;
+}
+
+.asset-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.asset-item {
+  flex: 1 1 80px;
+}
+
+.industry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.industry-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.industry-name {
+  color: #8b949e;
+  width: 80px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.industry-bar-bg {
+  flex: 1;
+  height: 14px;
+  background: #21262d;
+  border-radius: 2px;
+  min-width: 60px;
+}
+
+.industry-bar-fill {
+  height: 100%;
+  background: #58a6ff;
+  border-radius: 2px;
+}
+
+.industry-pct {
+  color: #c9d1d9;
+  font-size: 12px;
+  width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 /* Ranking & LHB */
 .ranking-tab .detail-main-tabs {
   margin-bottom: var(--space-sm);
@@ -1601,6 +1672,45 @@ tr:nth-child(3) .rank-num { color: var(--rank-3); }
     font-size: 12px;
     padding: 4px 6px;
   }
+
+  /* ── ETF detail H5 ── */
+  .detail-main-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+  }
+  .detail-main-tabs .tab {
+    flex-shrink: 0;
+  }
+  .ai-scores {
+    grid-template-columns: 1fr;
+  }
+  .ai-capital-row,
+  .ai-capital-sub {
+    grid-template-columns: 30px 1fr auto auto;
+    gap: 4px;
+  }
+  .ai-capital-net {
+    min-width: 56px;
+  }
+  .ai-capital-pct {
+    min-width: 44px;
+  }
+  .ai-ratio-text {
+    min-width: 40px;
+    font-size: 10px;
+  }
+  .industry-name {
+    width: 56px;
+    font-size: 11px;
+  }
+  .industry-pct {
+    width: 40px;
+    font-size: 11px;
+  }
+  .asset-item {
+    flex: 1 1 60px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1631,6 +1741,20 @@ tr:nth-child(3) .rank-num { color: var(--rank-3); }
   .filters input[type="text"] {
     width: 60px;
   }
+
+  /* ── ETF detail 480px ── */
+  .ai-capital-net { min-width: 48px; font-size: 11px; }
+  .ai-capital-pct { min-width: 38px; font-size: 10px; }
+  .ai-capital-label { font-size: 12px; }
+  .ai-capital-label-sm { font-size: 10px; }
+  .ai-ratio-bar { height: 10px; }
+  .ai-ratio-text { min-width: 36px; font-size: 9px; }
+  .ai-content { padding: 8px; }
+  .industry-name { width: 44px; font-size: 10px; }
+  .industry-pct { width: 36px; font-size: 10px; }
+  .industry-bar-bg { height: 10px; }
+  .asset-item { flex: 1 1 100%; }
+  .nav-content, .holdings-content { padding: 8px; }
 }
 
 /* ─── AI 分析 ─── */

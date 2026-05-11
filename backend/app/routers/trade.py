@@ -53,15 +53,16 @@ _WORKDAYS_2026 = {
 
 
 def _is_workday(date_str: str | None = None) -> bool:
-    """判断是否为交易日（工作日且非节假日，或调休上班日）。"""
+    """判断是否为交易日。周末一律休市（不管是否补班），工作日且非节假日才交易。"""
     if date_str is None:
         date_str = datetime.now(_CST).strftime("%Y-%m-%d")
+    # 获取星期几（0=周一，5=周六，6=周日）
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    if dt.weekday() >= 5:  # 周六或周日
+        return False
     if date_str in _HOLIDAYS_2026:
         return False
-    if date_str in _WORKDAYS_2026:
-        return True
-    return datetime.now(_CST).weekday() < 5 if date_str == datetime.now(_CST).strftime("%Y-%m-%d") \
-        else datetime.strptime(date_str, "%Y-%m-%d").weekday() < 5
+    return True
 
 
 _CST = timezone(timedelta(hours=8))

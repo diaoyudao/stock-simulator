@@ -411,7 +411,7 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
         <label>ST<select value={filters.stFilter} onChange={(e) => f("stFilter", e.target.value)}>
           <option value="all">全部</option><option value="exclude">排除ST</option><option value="only">仅ST</option>
         </select></label>
-        <label>行业<SearchSelect value={filters.sector} onChange={(v) => f("sector", v)} placeholder="全部行业" options={sectors.map((s) => ({ value: s.name, label: s.name }))} /></label>
+        <label>板块<SearchSelect value={filters.sector} onChange={(v) => f("sector", v)} placeholder="全部板块" options={sectors.map((s) => ({ value: s.name, label: s.name }))} /></label>
         <label>搜索<input type="text" value={filters.keyword} placeholder="代码/名称" onChange={(e) => f("keyword", e.target.value)} /></label>
         <button onClick={fetchStocks}>筛选</button>
         <button className="toggle-more" onClick={() => setShowMore(!showMore)}>{showMore ? "收起" : "更多"}</button>
@@ -763,7 +763,7 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
       const data = await api.getSectorOverview();
       setSectors(data);
     } catch {
-      toast("行业板块数据加载失败");
+      toast("板块数据加载失败");
     } finally {
       setLoading(false);
     }
@@ -773,25 +773,37 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
   usePolling(fetchSectors, 120000);
 
   if (loading) return <div className="loading">加载中...</div>;
+
+  // 主力强度判断
+  const getStrengthLabel = (mainNet: number, totalAmount: number): { value: number; label: string; color: string } => {
+    if (totalAmount <= 0) return { value: 0, label: "-", color: "" };
+    const strength = (mainNet / totalAmount) * 100;
+    if (strength <= -1) return { value: strength, label: "出货", color: "loss" };
+    if (strength < 1) return { value: strength, label: "洗盘", color: "" };
+    if (strength < 3) return { value: strength, label: "建仓", color: "profit" };
+    return { value: strength, label: "抢筹", color: "profit" };
+  };
+
   return (
     <div className="table-wrap"><table className="stock-table">
       <thead>
-        <tr><th>板块</th><th>均涨幅</th><th>涨/跌</th><th>成交额</th><th>新高</th><th>新低</th><th>领涨股</th></tr>
+        <tr><th>板块</th><th>涨跌幅</th><th>领涨股</th><th>涨幅</th><th>总金额</th><th>主力</th><th>强度</th></tr>
       </thead>
       <tbody>
-        {sectors.map((s) => (
-          <tr key={s.name}>
-            <td className="sector-name"><button className="stock-link" onClick={() => onSelectSector({sector: s.name})}>{s.name}</button></td>
-            <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
-            <td><span className="profit">{s.up_count}</span>/<span className="loss">{s.down_count}</span></td>
-            <td>{fmtAmt(s.amount)}</td>
-            <td className={s.new_high_count > 0 ? "profit" : ""}>{s.new_high_count || "-"}</td>
-            <td className={s.new_low_count > 0 ? "loss" : ""}>{s.new_low_count || "-"}</td>
-            <td>{s.top_stocks.map((t, i) => (
-              <span key={t.代码}>{i > 0 && "、"}<button className="stock-link" onClick={() => onSelectStock(t.代码)}>{t.名称}</button><span className={t.涨跌幅 >= 0 ? "profit" : "loss"}>{t.涨跌幅 >= 0 ? "+" : ""}{t.涨跌幅}%</span></span>
-            ))}</td>
-          </tr>
-        ))}
+        {sectors.map((s) => {
+          const strength = getStrengthLabel(s.main_net ?? 0, s.total_amount ?? 0);
+          return (
+            <tr key={s.name}>
+              <td className="sector-name"><button className="stock-link" onClick={() => onSelectSector({sector: s.name})}>{s.name}</button></td>
+              <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
+              <td>{s.top_stocks[0] && <button className="stock-link" onClick={() => onSelectStock(s.top_stocks[0].代码)}>{s.top_stocks[0].名称}</button>}</td>
+              <td className={s.top_stocks[0]?.涨跌幅 >= 0 ? "profit" : "loss"}>{s.top_stocks[0] ? (s.top_stocks[0].涨跌幅 >= 0 ? "+" : "") + s.top_stocks[0].涨跌幅.toFixed(2) + "%" : "-"}</td>
+              <td>{(s.total_amount ?? 0).toFixed(2)}亿</td>
+              <td className={(s.main_net ?? 0) >= 0 ? "profit" : "loss"}>{((s.main_net ?? 0) >= 0 ? "+" : "") + (s.main_net ?? 0).toFixed(2) + "亿"}</td>
+              <td className={strength.color}>{strength.value.toFixed(1)} {strength.label}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table></div>
   );

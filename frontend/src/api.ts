@@ -93,7 +93,7 @@ export interface StockDetail extends StockItem {
   "52周最低": number;
   连涨天数: number;
   连跌天数: number;
-  行业: string;
+  板块: string;
 }
 
 export interface EtfItem {
@@ -160,6 +160,9 @@ export interface SectorOverviewItem {
   up_count: number;
   down_count: number;
   amount: number;
+  total_amount?: number;
+  main_net?: number;
+  retail_net?: number;
   new_high_count: number;
   new_low_count: number;
   top_stocks: { 代码: string; 名称: string; 涨跌幅: number }[];

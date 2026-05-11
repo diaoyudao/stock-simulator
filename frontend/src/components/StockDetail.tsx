@@ -806,7 +806,7 @@ export default function StockDetail({ code, positions, onBack, onTrade, onAddCom
             )}
             {etfAllocationData && etfAllocationData.industry.length > 0 && (
               <div className="allocation-section">
-                <h4 className="allocation-title">行业配置</h4>
+                <h4 className="allocation-title">板块配置</h4>
                 <div className="industry-list">
                   {etfAllocationData.industry.map((ind, i) => (
                     <div key={i} className="industry-item">

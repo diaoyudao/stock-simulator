@@ -311,6 +311,7 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [indices, setIndices] = useState<{ code: string; name: string; current: number; yesterday: number; change_pct: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
@@ -333,6 +334,8 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
   });
 
   useEffect(() => { api.getSectors().then(setSectors).catch(() => {}); }, []);
+
+  useEffect(() => { api.getIndices().then(setIndices).catch(() => {}); }, []);
 
   useEffect(() => {
     if (!pendingFilter) return;
@@ -405,6 +408,21 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
 
   return (
     <div className="market-tab">
+      {indices.length > 0 && (
+        <div className="indices-bar">
+          {indices.map((idx) => (
+            <span key={idx.code} className="index-item">
+              <span className="index-name">{idx.name}</span>
+              <span className={`index-value ${idx.change_pct >= 0 ? "profit" : "loss"}`}>
+                {idx.current.toFixed(2)}
+              </span>
+              <span className={`index-change ${idx.change_pct >= 0 ? "profit" : "loss"}`}>
+                {idx.change_pct >= 0 ? "+" : ""}{idx.change_pct.toFixed(2)}%
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="filters">
         <label>价格<input type="number" value={filters.minPrice} placeholder="最低" onChange={(e) => f("minPrice", e.target.value)} />-<input type="number" value={filters.maxPrice} placeholder="最高" onChange={(e) => f("maxPrice", e.target.value)} /></label>
         <label>涨跌幅%<input type="number" value={filters.minChangePct} placeholder="最低" onChange={(e) => f("minChangePct", e.target.value)} />-<input type="number" value={filters.maxChangePct} placeholder="最高" onChange={(e) => f("maxChangePct", e.target.value)} /></label>

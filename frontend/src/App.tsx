@@ -264,14 +264,24 @@ function AccountBar({ account }: { account: AccountInfo }) {
 function NotificationBell() {
   const [triggeredAlerts, setTriggeredAlerts] = useState<{ id: number; code: string; name: string; message: string }[]>([]);
   const [showPanel, setShowPanel] = useState(false);
+  const prevCountRef = useRef(0);
   const ref = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
+    // 先触发提醒检查
+    try { await api.checkOrders(); } catch {}
     const alerts = await api.getAlerts("triggered");
-    setTriggeredAlerts(alerts.map((a: any) => ({ id: a.id, code: a.code, name: a.name, message: a.message || "" })));
+    const mapped = alerts.map((a: any) => ({ id: a.id, code: a.code, name: a.name, message: a.message || "" }));
+    // 新提醒弹toast
+    if (mapped.length > prevCountRef.current && prevCountRef.current > 0) {
+      const newOnes = mapped.slice(prevCountRef.current);
+      for (const a of newOnes) toast(`${a.name}: ${a.message}`);
+    }
+    prevCountRef.current = mapped.length;
+    setTriggeredAlerts(mapped);
   }, []);
 
-  usePolling(load, 60000);
+  usePolling(load, 30000);
 
   useEffect(() => {
     if (!showPanel) return;
@@ -285,7 +295,7 @@ function NotificationBell() {
   const hasNew = triggeredAlerts.length > 0;
 
   return (
-    <div className="notification-bell" ref={ref} onClick={() => setShowPanel(!showPanel)}>
+    <div className={`notification-bell${hasNew ? " has-alerts" : ""}`} ref={ref} onClick={() => setShowPanel(!showPanel)}>
       <span className="bell-icon">🔔</span>
       {hasNew && <span className="bell-badge">{triggeredAlerts.length}</span>}
       {showPanel && (
@@ -792,7 +802,6 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
 
   if (loading) return <div className="loading">加载中...</div>;
 
-  // 主力强度判断
   const getStrengthLabel = (mainNet: number, totalAmount: number): { value: number; label: string; color: string } => {
     if (totalAmount <= 0) return { value: 0, label: "-", color: "" };
     const strength = (mainNet / totalAmount) * 100;
@@ -803,22 +812,33 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
   };
 
   return (
-    <div className="table-wrap"><table className="stock-table">
+    <div className="table-wrap">
+      <div className="sector-formula">
+        总金额=主力流入+流出 | 主力净额=流入-流出（超大单+大单） | 强度=主力净额/总金额×100%
+      </div>
+      <table className="stock-table">
       <thead>
-        <tr><th>板块</th><th>涨跌幅</th><th>领涨股</th><th>涨幅</th><th>总金额</th><th>主力</th><th>强度</th></tr>
+        <tr><th>行业</th><th>涨跌幅</th><th>家数</th><th>领涨股</th><th>涨幅</th><th>总金额</th><th>主力净额</th><th>强度</th></tr>
       </thead>
       <tbody>
         {sectors.map((s) => {
           const strength = getStrengthLabel(s.main_net ?? 0, s.total_amount ?? 0);
+          const barWidth = Math.min(Math.abs(strength.value) * 3, 100);
           return (
             <tr key={s.name}>
               <td className="sector-name"><button className="stock-link" onClick={() => onSelectSector({sector: s.name})}>{s.name}</button></td>
               <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
+              <td className="sector-count">{s.up_count}</td>
               <td>{s.top_stocks[0] && <button className="stock-link" onClick={() => onSelectStock(s.top_stocks[0].代码)}>{s.top_stocks[0].名称}</button>}</td>
               <td className={s.top_stocks[0]?.涨跌幅 >= 0 ? "profit" : "loss"}>{s.top_stocks[0] ? (s.top_stocks[0].涨跌幅 >= 0 ? "+" : "") + s.top_stocks[0].涨跌幅.toFixed(2) + "%" : "-"}</td>
-              <td>{(s.total_amount ?? 0).toFixed(2)}亿</td>
+              <td>{(s.total_amount ?? 0).toFixed(1)}亿</td>
               <td className={(s.main_net ?? 0) >= 0 ? "profit" : "loss"}>{((s.main_net ?? 0) >= 0 ? "+" : "") + (s.main_net ?? 0).toFixed(2) + "亿"}</td>
-              <td className={strength.color}>{strength.value.toFixed(1)} {strength.label}</td>
+              <td className="strength-cell">
+                <div className="strength-bar-wrap">
+                  <div className={`strength-bar ${strength.color}`} style={{width: `${barWidth}%`}} />
+                  <span className={`strength-label ${strength.color}`}>{strength.value.toFixed(1)} {strength.label}</span>
+                </div>
+              </td>
             </tr>
           );
         })}

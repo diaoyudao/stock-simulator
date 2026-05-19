@@ -3,6 +3,8 @@ import logging
 import threading
 import numpy as np
 import akshare as ak
+import asyncio
+from app.services import astock_data
 from datetime import datetime, timedelta
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -238,7 +240,7 @@ def _fetch_spot_em_direct() -> list[dict]:
                 result_item = {}
                 for em_f, cn_key in _EM_SPOT_FIELD_MAP.items():
                     val = item.get(em_f, "")
-                    if cn_key == "代码":
+                    if cn_key in ("代码", "名称"):
                         result_item[cn_key] = str(val)
                     elif cn_key == "成交量":
                         result_item[cn_key] = int(_safe_float(val, 0))
@@ -772,7 +774,7 @@ def _fetch_kline_em_direct(code: str, period: str = "daily", start_date: str = "
 
 
 def get_stock_history(code: str, period: str = "daily", start_date: str = "20250101") -> list[dict]:
-    """获取单只股票历史K线，带60秒缓存。东方财富直接HTTP优先，AKShare备用。"""
+    """获取单只股票历史K线，带60秒缓存。mootdx优先，东方财富/AKShare备用。"""
     cache_key = f"{code}:{period}"
     now = time.time()
     if cache_key in _kline_cache:
@@ -780,7 +782,18 @@ def get_stock_history(code: str, period: str = "daily", start_date: str = "20250
         if now - ts < _kline_cache_timeout:
             return data
 
-    # 东方财富直接HTTP（优先）
+    # mootdx TCP直连（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.tdx_bars(code, period, 300))).result()
+        if raw:
+            _kline_cache[cache_key] = (now, raw)
+            return raw
+    except Exception as e:
+        logger.warning("mootdx K线API失败: %s", e)
+
+    # 东方财富直接HTTP
     try:
         data = _fetch_kline_em_direct(code, period, start_date)
         if data:
@@ -846,14 +859,55 @@ def _fetch_index_sina() -> list[dict]:
 
 
 def get_index_data() -> list[dict]:
-    """获取主要大盘指数当前数据，带60秒缓存。新浪直接优先，AKShare备用。"""
+    """获取主要大盘指数当前数据，带60秒缓存。腾讯行情优先，新浪/AKShare备用。"""
     global _index_cache
     now = time.time()
     ts, cached = _index_cache
     if cached and now - ts < _index_cache_timeout:
         return cached
 
-    # 新浪直接接口（优先，单次请求快速稳定）
+    # 腾讯行情直连（优先，指数需用正确前缀）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            def _fetch_indices_tencent():
+                codes = "sh000001,sz399001,sz399006"
+                url = f"https://qt.gtimg.cn/q={codes}"
+                r = _http_get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                r.encoding = "gbk"
+                result = []
+                for line in r.text.strip().split(";"):
+                    if '="' not in line or not line.strip():
+                        continue
+                    key = line.split("=")[0].split("_")[-1]  # e.g. sh000001
+                    val = line.split('"')[1]
+                    if not val:
+                        continue
+                    vals = val.split("~")
+                    if len(vals) < 53:
+                        continue
+                    code_num = key[2:]  # strip sh/sz prefix
+                    if code_num not in _INDEX_TARGETS:
+                        continue
+                    price = float(vals[3]) if vals[3] else 0
+                    last_close = float(vals[4]) if vals[4] else 0
+                    change_pct = round((price - last_close) / last_close * 100, 2) if last_close else 0
+                    result.append({
+                        "code": key,
+                        "name": _INDEX_TARGETS[code_num],
+                        "current": price,
+                        "yesterday": last_close,
+                        "change_pct": change_pct,
+                    })
+                return result
+            result = pool.submit(_fetch_indices_tencent).result()
+            if result:
+                _index_cache = (now, result)
+                return result
+    except Exception as e:
+        logger.warning("腾讯指数API失败: %s", e)
+
+    # 新浪直接接口
     try:
         result = _fetch_index_sina()
         if result:
@@ -897,147 +951,213 @@ def get_index_data() -> list[dict]:
         return cached or []
 
 
-# ─── 概念板块 ───
-
-def _fetch_sector_list_em() -> list[dict] | None:
-    """通过东方财富获取概念板块列表。失败返回 None。"""
-    try:
-        df = ak.stock_fund_flow_concept()
-        if df is None or df.empty:
-            return None
-        sectors = []
-        seen = set()
-        for _, row in df.iterrows():
-            name = str(row.get("行业", ""))
-            if name in seen:
-                continue
-            seen.add(name)
-            sectors.append({
-                "name": name,
-                "code": str(row.get("序号", "")),
-            })
-        return sectors
-    except Exception as e:
-        logger.warning("东方财富概念板块API失败: %s", e)
-        return None
-
-
-def _fetch_sector_list_sina() -> list[dict] | None:
-    """通过新浪获取板块列表（备用）。失败返回 None。"""
-    try:
-        df = ak.stock_sector_spot()
-        if df is None or df.empty:
-            return None
-        sectors = []
-        for _, row in df.iterrows():
-            sectors.append({
-                "name": str(row.get("板块", "")),
-                "code": str(row.get("label", "")),
-            })
-        return sectors
-    except Exception as e:
-        logger.warning("新浪板块API失败: %s", e)
-        return None
+# ─── 申万行业板块 ───
 
 
 def _fetch_sector_list() -> list[dict]:
-    """获取概念板块列表，缓存5分钟。东方财富优先，失败降级新浪。"""
+    """获取申万行业板块列表，缓存5分钟。31一级行业 + 131二级行业。"""
     global _sector_list_cache, _sector_list_cache_time
     now = time.time()
     if _sector_list_cache and now - _sector_list_cache_time < 300:
         return _sector_list_cache
-    sectors = _fetch_sector_list_em() or _fetch_sector_list_sina() or []
+    industries = get_sw_industries()
+    sectors = [
+        {"name": ind["name"], "code": str(ind["code"])}
+        for ind in industries
+    ]
     if sectors:
         _sector_list_cache = sectors
         _sector_list_cache_time = now
     return sectors
 
 
-def _fetch_sector_constituents_em(sector_name: str) -> set[str] | None:
-    """通过东方财富获取概念板块成分股。失败返回 None。"""
-    try:
-        df = ak.stock_board_concept_cons_em(symbol=sector_name)
-        if df is None or df.empty:
-            return None
-        return set(df["代码"].astype(str).tolist())
-    except Exception as e:
-        logger.warning("东方财富概念板块成分股API失败: %s", e)
-        return None
-
-
-def _fetch_sector_constituents_sina(sector_label: str) -> set[str] | None:
-    """通过新浪获取板块成分股（备用）。失败返回 None。"""
-    try:
-        df = ak.stock_sector_detail(sector=sector_label)
-        if df is None or df.empty:
-            return None
-        return set(df["code"].astype(str).tolist())
-    except Exception as e:
-        logger.warning("新浪成分股API失败: %s", e)
-        return None
-
-
-def _fetch_sector_constituents(sector_name: str) -> set[str]:
-    """获取某个板块的成分股代码集合，缓存5分钟。东方财富优先，失败降级新浪。"""
+def _fetch_sector_constituents(sector_name: str) -> set[str] | None:
+    """获取申万行业成分股代码集合，缓存5分钟。"""
     now = time.time()
     if sector_name in _sector_constituent_cache:
         ts, codes = _sector_constituent_cache[sector_name]
         if now - ts < _sector_constituent_timeout:
             return codes
-    codes = _fetch_sector_constituents_em(sector_name)
-    if codes is None:
-        # 东方财富失败，通过新浪备用接口查找
-        # 先在缓存中找板块对应的label/code
-        sector_label = ""
-        for s in _sector_list_cache:
-            if s["name"] == sector_name:
-                sector_label = s["code"]
-                break
-        if sector_label:
-            codes = _fetch_sector_constituents_sina(sector_label)
+    # 申万行业成分股
+    codes = _fetch_sw_industry_constituents(sector_name)
     if codes is not None:
         _sector_constituent_cache[sector_name] = (now, codes)
         return codes
     return None
 
 
+def _fetch_sw_industry_constituents(industry_name: str) -> set[str] | None:
+    """通过申万行业分类获取成分股。用硬编码映射查行业代码。"""
+    # 从硬编码映射查找行业代码
+    code = None
+    for c, n in _SW_L1_INDUSTRIES:
+        if n == industry_name:
+            code = c
+            break
+    if not code:
+        for c, n, _ in _SW_L2_INDUSTRIES:
+            if n == industry_name:
+                code = c
+                break
+    if not code:
+        return None
+
+    try:
+        df_cons = ak.index_component_sw(symbol=code)
+        if df_cons is not None and not df_cons.empty:
+            col = "证券代码" if "证券代码" in df_cons.columns else df_cons.columns[1]
+            return set(df_cons[col].astype(str).tolist())
+    except Exception as e:
+        logger.debug("申万行业成分股查询失败(%s/%s): %s", industry_name, code, e)
+    return None
+
+
 def get_sector_list() -> list[dict]:
-    """返回概念板块列表。"""
+    """返回申万行业板块列表。"""
     return _fetch_sector_list()
 
 
-def _build_sector_overview_em() -> list[dict] | None:
-    """通过东方财富构建概念板块概览。失败返回 None。"""
-    # 热门概念关键词
-    HOT_KEYWORDS = [
-        "AI", "人工智能", "ChatGPT", "AIGC", "算力", "数据中心", "云计算",
-        "芯片", "半导体", "集成电路", "光刻机", "存储芯片",
-        "新能源", "锂电池", "光伏", "储能", "充电桩", "固态电池", "钠离子电池",
-        "机器人", "减速器", "工业母机", "智能制造",
-        "低空经济", "飞行汽车", "无人机", "eVTOL",
-        "无人驾驶", "自动驾驶", "智能汽车", "汽车芯片",
-        "军工", "国防", "航天", "卫星", "导弹",
-        "医药", "创新药", "生物制药", "医疗器械", "中药",
-        "消费电子", "VR", "AR", "MR", "元宇宙", "苹果",
-        "华为", "鸿蒙", "5G", "6G", "通信",
-        "数字经济", "大数据", "网络安全", "信创",
-        "稀土", "小金属", "黄金", "有色",
-        "碳中和", "环保", "绿色电力",
-        "跨境电商", "出海",
-    ]
+# ─── 申万行业 ───
 
+_sw_industry_cache: list[dict] | None = None
+_sw_industry_cache_time: float = 0
+_SW_INDUSTRY_CACHE_TIMEOUT = 3600  # 1小时
+
+
+# 申万2021版一级行业代码映射（legulegu/push2均不可用时使用）
+_SW_L1_INDUSTRIES = [
+    ("801010", "农林牧渔"), ("801030", "基础化工"), ("801040", "钢铁"),
+    ("801050", "有色金属"), ("801080", "电子"), ("801110", "家用电器"),
+    ("801120", "食品饮料"), ("801130", "纺织服饰"), ("801140", "轻工制造"),
+    ("801150", "医药生物"), ("801160", "公用事业"), ("801170", "交通运输"),
+    ("801180", "房地产"), ("801200", "商贸零售"), ("801210", "社会服务"),
+    ("801230", "银行"), ("801250", "非银金融"), ("801260", "建筑材料"),
+    ("801270", "建筑装饰"), ("801280", "电力设备"), ("801290", "机械设备"),
+    ("801710", "计算机"), ("801720", "传媒"), ("801730", "通信"),
+    ("801740", "煤炭"), ("801750", "石油石化"), ("801760", "环保"),
+    ("801770", "美容护理"), ("801780", "国防军工"), ("801790", "综合"),
+    ("801880", "汽车"),
+]
+
+# 申万2021版二级行业代码映射
+_SW_L2_INDUSTRIES = [
+    ("801011", "种植业", "农林牧渔"), ("801012", "渔业", "农林牧渔"),
+    ("801013", "饲料", "农林牧渔"), ("801014", "农产品加工", "农林牧渔"),
+    ("801015", "林业", "农林牧渔"), ("801016", "养殖", "农林牧渔"),
+    ("801017", "农业综合", "农林牧渔"),
+    ("801031", "化学原料", "基础化工"), ("801032", "化学制品", "基础化工"),
+    ("801033", "塑料", "基础化工"), ("801034", "橡胶", "基础化工"),
+    ("801035", "农化制品", "基础化工"), ("801036", "非金属材料", "基础化工"),
+    ("801041", "普钢", "钢铁"), ("801042", "特钢", "钢铁"),
+    ("801051", "工业金属", "有色金属"), ("801052", "贵金属", "有色金属"),
+    ("801053", "小金属", "有色金属"), ("801054", "金属新材料", "有色金属"),
+    ("801081", "半导体", "电子"), ("801082", "元件", "电子"),
+    ("801083", "光学光电子", "电子"), ("801084", "消费电子", "电子"),
+    ("801085", "其他电子", "电子"), ("801086", "电子化学品", "电子"),
+    ("801111", "白色家电", "家用电器"), ("801112", "黑色家电", "家用电器"),
+    ("801113", "小家电", "家用电器"), ("801114", "厨卫电器", "家用电器"),
+    ("801115", "照明设备", "家用电器"), ("801116", "家电零部件", "家用电器"),
+    ("801121", "白酒", "食品饮料"), ("801122", "非白酒", "食品饮料"),
+    ("801123", "调味发酵品", "食品饮料"), ("801124", "乳品", "食品饮料"),
+    ("801125", "预加工食品", "食品饮料"), ("801126", "零食", "食品饮料"),
+    ("801127", "保健品", "食品饮料"), ("801128", "软饮料", "食品饮料"),
+    ("801129", "啤酒", "食品饮料"), ("80112A", "其他酒类", "食品饮料"),
+    ("801131", "服装", "纺织服饰"), ("801132", "家纺", "纺织服饰"),
+    ("801133", "饰品", "纺织服饰"), ("801134", "鞋帽", "纺织服饰"),
+    ("801135", "纺织制造", "纺织服饰"),
+    ("801141", "造纸", "轻工制造"), ("801142", "包装印刷", "轻工制造"),
+    ("801143", "家居", "轻工制造"), ("801144", "文娱用品", "轻工制造"),
+    ("801145", "其他轻工", "轻工制造"),
+    ("801151", "化学制药", "医药生物"), ("801152", "中药", "医药生物"),
+    ("801153", "生物制品", "医药生物"), ("801154", "医药商业", "医药生物"),
+    ("801155", "医疗器械", "医药生物"), ("801156", "医疗服务", "医药生物"),
+    ("801161", "电力", "公用事业"), ("801162", "燃气", "公用事业"),
+    ("801163", "环保", "公用事业"), ("801164", "水务", "公用事业"),
+    ("801171", "铁路公路", "交通运输"), ("801172", "航空机场", "交通运输"),
+    ("801173", "航运港口", "交通运输"), ("801174", "物流", "交通运输"),
+    ("801175", "公交", "交通运输"),
+    ("801181", "房地产", "房地产"), ("801182", "房地产服务", "房地产"),
+    ("801201", "一般零售", "商贸零售"), ("801202", "专业零售", "商贸零售"),
+    ("801203", "贸易", "商贸零售"), ("801204", "互联网电商", "商贸零售"),
+    ("801211", "酒店餐饮", "社会服务"), ("801212", "旅游及景区", "社会服务"),
+    ("801213", "教育", "社会服务"), ("801214", "专业服务", "社会服务"),
+    ("801231", "银行", "银行"),
+    ("801251", "证券", "非银金融"), ("801252", "保险", "非银金融"),
+    ("801253", "多元金融", "非银金融"),
+    ("801261", "水泥", "建筑材料"), ("801262", "玻璃玻纤", "建筑材料"),
+    ("801263", "装修建材", "建筑材料"),
+    ("801271", "房屋建设", "建筑装饰"), ("801272", "装修装饰", "建筑装饰"),
+    ("801273", "基础建设", "建筑装饰"), ("801274", "专业工程", "建筑装饰"),
+    ("801275", "工程咨询", "建筑装饰"),
+    ("801281", "电池", "电力设备"), ("801282", "光伏", "电力设备"),
+    ("801283", "风电", "电力设备"), ("801284", "电机", "电力设备"),
+    ("801285", "电网设备", "电力设备"),
+    ("801291", "通用设备", "机械设备"), ("801292", "专用设备", "机械设备"),
+    ("801293", "仪器仪表", "机械设备"), ("801294", "自动化设备", "机械设备"),
+    ("801711", "计算机设备", "计算机"), ("801712", "IT服务", "计算机"),
+    ("801713", "软件开发", "计算机"),
+    ("801721", "出版", "传媒"), ("801722", "影视", "传媒"),
+    ("801723", "数字媒体", "传媒"), ("801724", "游戏", "传媒"),
+    ("801725", "营销", "传媒"), ("801726", "电视广播", "传媒"),
+    ("801727", "院线", "传媒"),
+    ("801731", "通信服务", "通信"), ("801732", "通信设备", "通信"),
+    ("801741", "煤炭开采", "煤炭"), ("801742", "焦炭", "煤炭"),
+    ("801751", "油气开采", "石油石化"), ("801752", "油服工程", "石油石化"),
+    ("801753", "炼化及贸易", "石油石化"),
+    ("801761", "环境治理", "环保"), ("801762", "环保设备", "环保"),
+    ("801771", "个护用品", "美容护理"), ("801772", "化妆品", "美容护理"),
+    ("801773", "生活用纸", "美容护理"),
+    ("801781", "航天装备", "国防军工"), ("801782", "航空装备", "国防军工"),
+    ("801783", "地兵装备", "国防军工"), ("801784", "军工电子", "国防军工"),
+    ("801791", "综合", "综合"),
+    ("801881", "乘用车", "汽车"), ("801882", "商用车", "汽车"),
+    ("801883", "汽车零部件", "汽车"), ("801884", "摩托车", "汽车"),
+    ("801885", "汽车服务", "汽车"),
+]
+
+
+def get_sw_industries() -> list[dict]:
+    """申万行业分级：31一级行业 + 二级行业。缓存1小时。动态查成分股数量。"""
+    global _sw_industry_cache, _sw_industry_cache_time
+    now = time.time()
+    if _sw_industry_cache and now - _sw_industry_cache_time < _SW_INDUSTRY_CACHE_TIMEOUT:
+        return _sw_industry_cache
+
+    result = []
+    for code, name in _SW_L1_INDUSTRIES:
+        count = _get_sw_constituent_count(code)
+        result.append({"name": name, "code": code, "level": 1, "count": count, "parent": "", "pe": 0})
+    for code, name, parent in _SW_L2_INDUSTRIES:
+        count = _get_sw_constituent_count(code)
+        result.append({"name": name, "code": code, "level": 2, "count": count, "parent": parent, "pe": 0})
+
+    _sw_industry_cache = result
+    _sw_industry_cache_time = now
+    return result
+
+
+def _get_sw_constituent_count(code: str) -> int:
+    """查申万行业成分股数量。"""
     try:
-        df = ak.stock_fund_flow_concept()
+        df = ak.index_component_sw(symbol=code)
+        if df is not None and not df.empty:
+            return len(df)
+    except Exception:
+        pass
+    return 0
+
+
+def _build_sector_overview_sw() -> list[dict] | None:
+    """基于东财行业资金流构建板块概览，含主力/净额/强度数据。"""
+    try:
+        df = ak.stock_fund_flow_industry()
         if df is None or df.empty:
             return None
-        result = []
         get_spot_data()
         name_to_code = {s["名称"]: s["代码"] for s in _cached_stocks}
+        result = []
         for _, row in df.iterrows():
             name = str(row.get("行业", ""))
-            # 筛选热门概念
-            if not any(kw in name for kw in HOT_KEYWORDS):
-                continue
             top_name = str(row.get("领涨股", ""))
             top_change = _safe_float(row.get("领涨股-涨跌幅", 0))
             top_code = name_to_code.get(top_name, "")
@@ -1051,99 +1171,15 @@ def _build_sector_overview_em() -> list[dict] | None:
                 "up_count": int(_safe_float(row.get("公司家数", 0))),
                 "down_count": 0,
                 "amount": main_net * 1e8,
-                "total_amount": total_amount,
-                "main_net": main_net,
+                "total_amount": round(total_amount, 2),
+                "main_net": round(main_net, 2),
                 "new_high_count": 0,
                 "new_low_count": 0,
                 "top_stocks": [{"代码": top_code, "名称": top_name, "涨跌幅": round(top_change, 2)}],
             })
         return result
     except Exception as e:
-        logger.warning("东方财富概念板块概览失败: %s", e)
-        return None
-
-
-def _fetch_sector_constituents_sina_batch(labels: list[str]) -> dict[str, list[dict]]:
-    """并发获取多个新浪板块的成分股。返回 {label: [{code, name, changepercent}, ...]}。限制并发为10。"""
-    result = {}
-    lock = threading.Lock()
-    sem = threading.Semaphore(10)
-
-    def _fetch_one(label: str):
-        with sem:
-            try:
-                df = ak.stock_sector_detail(sector=label)
-                if df is not None and not df.empty:
-                    stocks = []
-                    for _, row in df.iterrows():
-                        stocks.append({
-                            "code": str(row.get("code", "")),
-                            "name": str(row.get("name", "")),
-                            "changepercent": _safe_float(row.get("changepercent", 0)),
-                        })
-                    with lock:
-                        result[label] = stocks
-            except Exception as e:
-                logger.warning("新浪板块成分股获取失败(%s): %s", label, e)
-
-    futures = [_executor.submit(_fetch_one, lb) for lb in labels]
-    for f in futures:
-        f.result(timeout=30)
-    return result
-
-
-def _build_sector_overview_sina() -> list[dict] | None:
-    """通过新浪构建板块概览（备用）。并发获取成分股统计涨跌家数。"""
-    try:
-        df = ak.stock_sector_spot()
-        if df is None or df.empty:
-            return None
-        get_spot_data()
-        name_to_code = {s["名称"]: s["代码"] for s in _cached_stocks}
-        price_map = {s["代码"]: s["最新价"] for s in _cached_stocks}
-
-        # 并发获取所有板块成分股，用于统计涨跌家数
-        labels = df["label"].tolist()
-        label_constituents = _fetch_sector_constituents_sina_batch(labels)
-
-        result = []
-        for _, row in df.iterrows():
-            label = str(row.get("label", ""))
-
-            # 从成分股统计涨跌家数 + 找领涨股
-            up_count, down_count = 0, 0
-            top_code, top_name, top_change = "", "", 0.0
-            stocks_info = label_constituents.get(label)
-            if stocks_info:
-                for st in stocks_info:
-                    chg = st["changepercent"]
-                    if chg > 0:
-                        up_count += 1
-                    elif chg < 0:
-                        down_count += 1
-                    if chg > top_change:
-                        top_change = chg
-                        top_code = st["code"]
-                        top_name = st["name"]
-            else:
-                # 成分股获取失败，用板块列表的领涨股
-                top_name = str(row.get("股票名称", ""))
-                top_change = _safe_float(row.get("个股-涨跌幅", 0))
-                top_code = name_to_code.get(top_name, "")
-
-            result.append({
-                "name": str(row.get("板块", "")),
-                "avg_change_pct": round(_safe_float(row.get("涨跌幅", 0)), 2),
-                "up_count": up_count,
-                "down_count": down_count,
-                "amount": _safe_float(row.get("总成交额", 0)),
-                "new_high_count": 0,
-                "new_low_count": 0,
-                "top_stocks": [{"代码": top_code, "名称": top_name, "涨跌幅": round(top_change, 2)}],
-            })
-        return result
-    except Exception as e:
-        logger.warning("新浪板块概览失败: %s", e)
+        logger.warning("行业资金流概览构建失败: %s", e)
         return None
 
 
@@ -1154,7 +1190,6 @@ def _enrich_sector_52week(sectors: list[dict]) -> None:
         price_map = dict(_price_map_cache)
     for sec in sectors:
         name = sec["name"]
-        # 从成分股缓存获取该板块的股票代码
         cached = _sector_constituent_cache.get(name)
         if not cached:
             continue
@@ -1180,13 +1215,13 @@ def _enrich_sector_52week(sectors: list[dict]) -> None:
 
 
 def get_sector_overview() -> list[dict]:
-    """返回各概念板块概览，带5分钟缓存。东方财富优先，失败降级新浪。"""
+    """返回申万一级行业概览，带5分钟缓存。"""
     global _sector_overview_cache, _sector_overview_cache_time
     now = time.time()
     if _sector_overview_cache and now - _sector_overview_cache_time < 300:
         return _sector_overview_cache
 
-    result = _build_sector_overview_em() or _build_sector_overview_sina()
+    result = _build_sector_overview_sw()
     if result:
         result.sort(key=lambda x: x["avg_change_pct"], reverse=True)
         _enrich_sector_52week(result)
@@ -1699,43 +1734,78 @@ _etf_allocation_cache_timeout = 1800
 
 
 def get_etf_fund_flow(code: str) -> list[dict]:
-    """获取ETF资金流向（每日），缓存5分钟。东方财富直接HTTP优先，AKShare备用。"""
+    """获取ETF资金流向（每日），缓存5分钟。datacenter优先，push2his/AKShare备用。"""
     cache_key = f"etf_fundflow:{code}"
     now = time.time()
     if cache_key in _etf_fund_flow_cache:
         ts, data = _etf_fund_flow_cache[cache_key]
         if now - ts < _etf_fund_flow_cache_timeout:
             return data
-    # 东方财富直接HTTP（优先）
+    # 1. 东财数据中心（当天数据，始终可用）
+    current_day = []
     try:
-        result = _fetch_fund_flow_em_direct(code)
-        if result:
-            _etf_fund_flow_cache[cache_key] = (now, result)
-            return result
+        current_day = _fetch_fund_flow_datacenter(code)
+        if current_day:
+            _save_fund_flow_history(code, current_day)
     except Exception as e:
-        logger.warning("东方财富ETF资金流向直接API失败(%s): %s", code, e)
-    # AKShare备用
+        logger.warning("东财数据中心ETF资金流向失败(%s): %s", code, e)
+    # 2. push2his完整历史（可能不可用）
+    full_history = []
     try:
-        market = _sz_sh_prefix(code)
-        df = ak.stock_individual_fund_flow(stock=code, market=market)
-        if df is None or df.empty:
-            return []
-        result = _parse_fund_flow_ak(df)
-        _etf_fund_flow_cache[cache_key] = (now, result)
-        return result
+        full_history = _fetch_fund_flow_em_direct(code)
     except Exception as e:
-        logger.warning("AKShare ETF资金流向API失败(%s): %s", code, e)
-        return []
+        logger.debug("push2his ETF资金流向失败(%s): %s", code, e)
+    # 3. AKShare备用
+    if not full_history:
+        try:
+            market = _sz_sh_prefix(code)
+            df = ak.stock_individual_fund_flow(stock=code, market=market)
+            if df is not None and not df.empty:
+                full_history = _parse_fund_flow_ak(df)
+                _save_fund_flow_history(code, full_history)
+        except Exception as e:
+            logger.debug("AKShare ETF资金流向API失败(%s): %s", code, e)
+    if full_history:
+        result = full_history
+    else:
+        result = _load_fund_flow_history(code)
+        if current_day:
+            existing_dates = {r["date"] for r in result}
+            for r in current_day:
+                if r["date"] not in existing_dates:
+                    result.append(r)
+            result.sort(key=lambda x: x["date"])
+    _etf_fund_flow_cache[cache_key] = (now, result)
+    return result
 
 
 def get_etf_nav(code: str) -> list[dict]:
-    """获取ETF历史净值，缓存5分钟。"""
+    """获取ETF历史净值，缓存5分钟。astock_data东财直连优先，AKShare备用。"""
     cache_key = f"etf_nav:{code}"
     now = time.time()
     if cache_key in _etf_nav_cache:
         ts, data = _etf_nav_cache[cache_key]
         if now - ts < _etf_nav_cache_timeout:
             return data
+    # astock_data 东财直连（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.etf_nav(code))).result()
+        if raw:
+            result = []
+            for item in raw:
+                result.append({
+                    "date": item.get("日期", ""),
+                    "nav": item.get("收盘", 0),
+                    "acc_nav": 0,
+                    "growth": 0,
+                })
+            _etf_nav_cache[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning("astock_data ETF净值失败: %s", e)
+    # AKShare备用
     try:
         start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
         end = datetime.now().strftime("%Y%m%d")
@@ -1758,13 +1828,24 @@ def get_etf_nav(code: str) -> list[dict]:
 
 
 def get_etf_holdings(code: str) -> list[dict]:
-    """获取ETF十大持仓，缓存30分钟。"""
+    """获取ETF十大持仓，缓存30分钟。astock_data东财数据中心优先，AKShare备用。"""
     cache_key = f"etf_holdings:{code}"
     now = time.time()
     if cache_key in _etf_holdings_cache:
         ts, data = _etf_holdings_cache[cache_key]
         if now - ts < _etf_holdings_cache_timeout:
             return data
+    # astock_data 东财数据中心（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.etf_holdings(code))).result()
+        if raw:
+            _etf_holdings_cache[cache_key] = (now, raw)
+            return raw
+    except Exception as e:
+        logger.warning("astock_data ETF持仓失败: %s", e)
+    # AKShare备用
     try:
         year = str(datetime.now().year)
         df = ak.fund_portfolio_hold_em(symbol=code, date=year)
@@ -1791,7 +1872,7 @@ def get_etf_holdings(code: str) -> list[dict]:
 
 
 def get_etf_allocation(code: str) -> dict:
-    """获取ETF资产配置+行业配置，缓存30分钟。"""
+    """获取ETF资产配置+行业配置，缓存30分钟。astock_data东财数据中心优先，AKShare备用。"""
     cache_key = f"etf_allocation:{code}"
     now = time.time()
     if cache_key in _etf_allocation_cache:
@@ -1799,17 +1880,31 @@ def get_etf_allocation(code: str) -> dict:
         if now - ts < _etf_allocation_cache_timeout:
             return data
     result: dict = {"asset": [], "industry": []}
-    # 资产配置
+    # astock_data 东财数据中心资产配置（优先）
     try:
-        df = ak.fund_individual_detail_hold_xq(symbol=code)
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.etf_allocation(code))).result()
+        if raw:
+            for item in raw:
                 result["asset"].append({
-                    "type": str(row.get("资产类型", "")),
-                    "ratio": _safe_float(row.get("仓位占比", 0)),
+                    "type": "股票" if item.get("股票占比", 0) > 0 else "其他",
+                    "ratio": max(item.get("股票占比", 0), item.get("债券占比", 0), item.get("现金占比", 0), item.get("其他占比", 0)),
                 })
     except Exception as e:
-        logger.warning("ETF资产配置获取失败(%s): %s", code, e)
+        logger.warning("astock_data ETF资产配置失败: %s", e)
+    # AKShare资产配置补充（如有astock_data无数据则走原有逻辑）
+    if not result["asset"]:
+        try:
+            df = ak.fund_individual_detail_hold_xq(symbol=code)
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    result["asset"].append({
+                        "type": str(row.get("资产类型", "")),
+                        "ratio": _safe_float(row.get("仓位占比", 0)),
+                    })
+        except Exception as e:
+            logger.warning("ETF资产配置获取失败(%s): %s", code, e)
     # 行业配置
     try:
         year = str(datetime.now().year)
@@ -1840,13 +1935,25 @@ _VALID_STATEMENTS = {"利润表", "资产负债表", "现金流量表"}
 
 
 def get_financial_abstract(code: str) -> list[dict]:
-    """获取个股财务摘要（同花顺），返回最近8期，缓存5分钟。"""
+    """获取个股财务摘要，返回最近8期，缓存5分钟。mootdx季报优先，AKShare同花顺备用。"""
     cache_key = f"abstract:{code}"
     now = time.time()
     if cache_key in _financial_cache:
         ts, data = _financial_cache[cache_key]
         if now - ts < _financial_cache_timeout:
             return data
+    # mootdx 37字段季报快照（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.tdx_finance(code))).result()
+        if raw:
+            result = [raw]
+            _financial_cache[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning("mootdx财务快照失败: %s", e)
+    # AKShare同花顺（备用）
     try:
         df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
         if df is None or df.empty:
@@ -1871,7 +1978,7 @@ def get_financial_abstract(code: str) -> list[dict]:
 
 
 def get_financial_statement(code: str, statement_type: str) -> list[dict]:
-    """获取三大报表原始数据，缓存5分钟。statement_type: 利润表/资产负债表/现金流量表"""
+    """获取三大报表原始数据，缓存5分钟。新浪直连优先，AKShare备用。statement_type: 利润表/资产负债表/现金流量表"""
     if statement_type not in _VALID_STATEMENTS:
         return []
     cache_key = f"stmt:{code}:{statement_type}"
@@ -1880,6 +1987,19 @@ def get_financial_statement(code: str, statement_type: str) -> list[dict]:
         ts, data = _statement_cache[cache_key]
         if now - ts < _statement_cache_timeout:
             return data
+    # 新浪直连（优先，同源替换）
+    try:
+        _type_map = {"利润表": "lrb", "资产负债表": "fzb", "现金流量表": "llb"}
+        report_type = _type_map.get(statement_type, "lrb")
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.sina_financial_report(code, report_type))).result()
+        if raw:
+            _statement_cache[cache_key] = (now, raw)
+            return raw
+    except Exception as e:
+        logger.warning("新浪财报直连失败: %s", e)
+    # AKShare备用
     try:
         prefix = _sina_prefix(code)
         df = ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol=statement_type)
@@ -1910,13 +2030,32 @@ _news_cache_timeout = 300
 
 
 def get_stock_news(code: str) -> list[dict]:
-    """获取个股新闻资讯（东方财富），缓存5分钟。"""
+    """获取个股新闻资讯，缓存5分钟。astock_data东财JSONP优先，现有东财搜索API备用。"""
     cache_key = f"news:{code}"
     now = time.time()
     if cache_key in _news_cache:
         ts, data = _news_cache[cache_key]
         if now - ts < _news_cache_timeout:
             return data
+    # astock_data 东财JSONP（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.eastmoney_stock_news(code, 15))).result()
+        if raw:
+            result = []
+            for item in raw:
+                result.append({
+                    "title": item.get("标题", ""),
+                    "url": item.get("链接", ""),
+                    "source": item.get("来源", ""),
+                    "time": item.get("时间", ""),
+                })
+            _news_cache[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning("astock_data资讯API失败: %s", e)
+    # 现有东财搜索API（备用）
     try:
         stock = _stock_index.get(code)
         name = stock["名称"] if stock else code
@@ -2026,14 +2165,33 @@ def _fetch_intraday_em_direct(code: str) -> list[dict]:
 
 
 def get_intraday(code: str) -> list[dict]:
-    """获取个股当日分时成交数据，缓存60秒。东方财富直接HTTP优先，AKShare备用。"""
+    """获取个股当日分时成交数据，缓存60秒。mootdx优先，东方财富直接HTTP/AKShare备用。"""
     cache_key = f"intraday:{code}"
     now = time.time()
     if cache_key in _intraday_cache:
         ts, data = _intraday_cache[cache_key]
         if now - ts < _intraday_cache_timeout:
             return data
-    # 东方财富直接HTTP（优先）
+    # mootdx TCP直连（优先，最稳定）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = pool.submit(lambda: asyncio.run(astock_data.tdx_transaction(code))).result()
+        if result:
+            # 转换为前端期望的格式
+            converted = []
+            for item in result:
+                converted.append({
+                    "time": item.get("时间", ""),
+                    "price": item.get("成交价", 0),
+                    "volume": item.get("成交量", 0),
+                    "nature": item.get("性质", "中性"),
+                })
+            _intraday_cache[cache_key] = (now, converted)
+            return converted
+    except Exception as e:
+        logger.warning("mootdx分时API失败: %s", e)
+    # 东方财富直接HTTP
     try:
         result = _fetch_intraday_em_direct(code)
         if result:
@@ -2068,14 +2226,34 @@ _bidask_cache_timeout = 10
 
 
 def get_bid_ask(code: str) -> dict:
-    """获取个股五档盘口数据，缓存10秒。新浪直接优先，AKShare备用。"""
+    """获取个股五档盘口数据，缓存10秒。mootdx优先，新浪直接/AKShare备用。"""
     cache_key = f"bidask:{code}"
     now = time.time()
     if cache_key in _bidask_cache:
         ts, data = _bidask_cache[cache_key]
         if now - ts < _bidask_cache_timeout:
             return data
-    # 新浪直接接口（优先，快速稳定）
+    # mootdx TCP直连（优先，含完整五档）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            quotes = pool.submit(lambda: asyncio.run(astock_data.tdx_quotes([code]))).result()
+        if quotes and code in quotes:
+            q = quotes[code]
+            result = {}
+            for i in range(1, 6):
+                result[f"buy_{i}"] = q.get(f"买{i}", 0)
+                result[f"buy_{i}_vol"] = int(q.get(f"买量{i}", 0))
+                result[f"sell_{i}"] = q.get(f"卖{i}", 0)
+                result[f"sell_{i}_vol"] = int(q.get(f"卖量{i}", 0))
+            result["latest"] = q.get("最新价", 0)
+            result["limit_up"] = 0
+            result["limit_down"] = 0
+            _bidask_cache[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning("mootdx盘口API失败: %s", e)
+    # 新浪直接接口
     try:
         result = _fetch_bidask_sina(code)
         if result:
@@ -2117,6 +2295,46 @@ _fund_flow_cache_timeout = 300
 def _sz_sh_prefix(code: str) -> str:
     """返回 sz/sh 前缀。6/9/5开头→sh，其余→sz。"""
     return "sh" if code.startswith(("6", "9", "5")) else "sz"
+
+
+def _fetch_fund_flow_datacenter(code: str) -> list[dict]:
+    """通过东方财富数据中心获取当天资金流向（push2his不可用时的替代方案）。"""
+    r = _http_get(
+        "https://datacenter-web.eastmoney.com/api/data/v1/get",
+        params={
+            "reportName": "RPT_DMSK_TS_STOCKNEW", "columns": "ALL",
+            "filter": f'(SECURITY_CODE="{code}")',
+            "pageNumber": "1", "pageSize": "5",
+            "sortColumns": "TRADE_DATE", "sortTypes": "-1",
+            "source": "WEB", "client": "WEB",
+        },
+        headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+    )
+    d = r.json()
+    items = (d.get("result") or {}).get("data") or []
+    if not items:
+        return []
+    item = items[0]
+    huge_net = _safe_float(item.get("SUPERDEAL_INFLOW", 0)) - _safe_float(item.get("SUPERDEAL_OUTFLOW", 0))
+    big_net = _safe_float(item.get("BIGDEAL_INFLOW", 0)) - _safe_float(item.get("BIGDEAL_OUTFLOW", 0))
+    main_net = _safe_float(item.get("PRIME_INFLOW", 0))
+    non_main = -main_net  # 中单+小单 ≈ -主力
+    close = _safe_float(item.get("CLOSE_PRICE", 0))
+    change_pct = _safe_float(item.get("CHANGE_RATE", 0))
+    trade_date = item.get("TRADE_DATE", "")
+    if trade_date:
+        trade_date = trade_date[:10]
+    # 近似拆分中单/小单（主力=超大+大，其余按3:2拆分）
+    mid_net = round(non_main * 0.6)
+    small_net = round(non_main * 0.4)
+    return [{
+        "date": trade_date, "close": close, "change_pct": change_pct,
+        "main_net": main_net, "main_pct": 0,
+        "huge_net": huge_net, "huge_pct": 0,
+        "big_net": big_net, "big_pct": 0,
+        "mid_net": mid_net, "mid_pct": 0,
+        "small_net": small_net, "small_pct": 0,
+    }]
 
 
 def _fetch_fund_flow_em_direct(code: str) -> list[dict]:
@@ -2176,34 +2394,97 @@ def _parse_fund_flow_ak(df) -> list[dict]:
     return result
 
 
+def _fund_flow_history_path(code: str):
+    """资金流向历史快照文件路径。"""
+    from pathlib import Path
+    d = Path(__file__).resolve().parent.parent.parent / "data" / "fund_flow"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{code}.json"
+
+
+def _load_fund_flow_history(code: str) -> list[dict]:
+    """从本地文件加载历史资金流向数据。"""
+    import json
+    p = _fund_flow_history_path(code)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_fund_flow_history(code: str, data: list[dict]):
+    """追加保存资金流向数据到本地文件（去重按日期）。"""
+    import json
+    existing = _load_fund_flow_history(code)
+    existing_dates = {r["date"] for r in existing}
+    for r in data:
+        if r["date"] not in existing_dates:
+            existing.append(r)
+            existing_dates.add(r["date"])
+    existing.sort(key=lambda x: x["date"])
+    # 保留最近120天
+    if len(existing) > 120:
+        existing = existing[-120:]
+    p = _fund_flow_history_path(code)
+    p.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+
+
 def get_fund_flow(code: str) -> list[dict]:
-    """获取个股资金流向（每日），缓存5分钟。东方财富直接HTTP优先，AKShare备用。"""
+    """获取个股资金流向（每日），缓存5分钟。datacenter当天+本地历史优先，push2his备用。"""
     cache_key = f"fundflow:{code}"
     now = time.time()
     if cache_key in _fund_flow_cache:
         ts, data = _fund_flow_cache[cache_key]
         if now - ts < _fund_flow_cache_timeout:
             return data
-    # 东方财富直接HTTP（优先）
+    # 1. 东财数据中心（当天数据，始终可用）
+    current_day = []
     try:
-        result = _fetch_fund_flow_em_direct(code)
-        if result:
-            _fund_flow_cache[cache_key] = (now, result)
-            return result
+        current_day = _fetch_fund_flow_datacenter(code)
+        if current_day:
+            _save_fund_flow_history(code, current_day)
     except Exception as e:
-        logger.warning("东方财富资金流向直接API失败: %s", e)
-    # AKShare备用
+        logger.warning("东财数据中心资金流向失败: %s", e)
+    # 2. push2his完整历史（含百分比字段，可能DNS不可用）
+    full_history = []
     try:
-        market = _sz_sh_prefix(code)
-        df = ak.stock_individual_fund_flow(stock=code, market=market)
-        if df is None or df.empty:
-            return []
-        result = _parse_fund_flow_ak(df)
-        _fund_flow_cache[cache_key] = (now, result)
-        return result
+        full_history = _fetch_fund_flow_em_direct(code)
+        if full_history:
+            _save_fund_flow_history(code, full_history)
     except Exception as e:
-        logger.warning("AKShare资金流向API失败: %s", e)
-        return []
+        logger.debug("push2his资金流向失败: %s", e)
+    # 3. AKShare备用（也依赖push2his，大概率失败）
+    if not full_history:
+        try:
+            market = _sz_sh_prefix(code)
+            df = ak.stock_individual_fund_flow(stock=code, market=market)
+            if df is not None and not df.empty:
+                full_history = _parse_fund_flow_ak(df)
+                _save_fund_flow_history(code, full_history)
+        except Exception as e:
+            logger.debug("AKShare资金流向API失败: %s", e)
+    # 合并数据：有完整历史（含百分比）就用，否则用本地历史+当天
+    if full_history:
+        result = full_history
+    else:
+        result = _load_fund_flow_history(code)
+        if current_day:
+            existing_dates = {r["date"] for r in result}
+            for r in current_day:
+                if r["date"] not in existing_dates:
+                    result.append(r)
+            result.sort(key=lambda x: x["date"])
+    # 用当天datacenter数据补充close/change_pct（历史数据可能缺失）
+    if current_day and result:
+        today = current_day[0].get("date", "")
+        for r in result:
+            if r["date"] == today and r.get("close", 0) == 0:
+                r["close"] = current_day[0].get("close", 0)
+                r["change_pct"] = current_day[0].get("change_pct", 0)
+    _fund_flow_cache[cache_key] = (now, result)
+    return result
 
 
 # ─── 分钟K线 ───
@@ -2220,7 +2501,28 @@ def get_minute_history(code: str, period: str = "1") -> list[dict]:
         ts, data = _minute_cache[cache_key]
         if now - ts < _minute_cache_timeout:
             return data
-    # 东方财富直接HTTP（优先，复用K线API，改klt参数）
+    # mootdx TCP直连（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = pool.submit(lambda: asyncio.run(astock_data.tdx_bars(code, period, 300))).result()
+        if result:
+            # 转换为前端期望的格式
+            converted = []
+            for item in result:
+                converted.append({
+                    "day": item.get("day", ""),
+                    "open": str(item.get("open", 0)),
+                    "close": str(item.get("close", 0)),
+                    "high": str(item.get("high", 0)),
+                    "low": str(item.get("low", 0)),
+                    "volume": str(item.get("volume", 0)),
+                })
+            _minute_cache[cache_key] = (now, converted)
+            return converted
+    except Exception as e:
+        logger.warning("mootdx分钟K线API失败: %s", e)
+    # 东方财富直接HTTP（复用K线API，改klt参数）
     try:
         klt = _EM_MINUTE_KLT_MAP.get(period, 1)
         secid = _em_secid(code)
@@ -2275,7 +2577,33 @@ def get_minute_history(code: str, period: str = "1") -> list[dict]:
 # ─── 涨跌排行 ───
 
 def get_ranking(sort_by: str = "涨跌幅", order: str = "desc", limit: int = 50) -> list[dict]:
-    """从已有行情缓存中提取排行榜。sort_by: 涨跌幅/换手率/成交额/量比, order: desc/asc"""
+    """涨跌排行。东财直连优先，行情缓存备用。sort_by: 涨跌幅/换手率/成交额/量比, order: desc/asc"""
+    # 东财直连（优先，数据更全更实时）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.eastmoney_ranking(sort_by, -1 if order == "desc" else 1, 1, limit))).result()
+        if raw:
+            # 转换为前端期望的中文key格式
+            result = []
+            for item in raw:
+                result.append({
+                    "代码": item.get("代码", ""),
+                    "名称": item.get("名称", ""),
+                    "最新价": item.get("最新价", 0),
+                    "涨跌幅": item.get("涨跌幅", 0),
+                    "涨跌额": item.get("涨跌额", 0),
+                    "成交量": item.get("成交量", 0),
+                    "成交额": item.get("成交额", 0),
+                    "换手率": item.get("换手率", 0),
+                    "量比": item.get("量比", 0),
+                    "市盈率-动态": item.get("市盈率-动态", 0),
+                    "市净率": item.get("市净率", 0),
+                })
+            return result
+    except Exception as e:
+        logger.warning("东财排行直连失败: %s", e)
+    # 行情缓存备用
     stocks = get_spot_data()
     if not stocks:
         return []
@@ -2292,13 +2620,40 @@ _lhb_cache_timeout = 300
 
 
 def get_lhb(days: int = 5) -> list[dict]:
-    """获取龙虎榜数据，缓存5分钟。"""
+    """获取龙虎榜数据，缓存5分钟。astock_data东财数据中心优先，AKShare备用。"""
     cache_key = "lhb"
     now = time.time()
     if cache_key in _lhb_cache:
         ts, data = _lhb_cache[cache_key]
         if now - ts < _lhb_cache_timeout:
             return data
+    # astock_data 东财数据中心（优先）
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            raw = pool.submit(lambda: asyncio.run(astock_data.daily_dragon_tiger())).result()
+        stocks = raw.get("个股", [])
+        if stocks:
+            result = []
+            for item in stocks:
+                result.append({
+                    "代码": item.get("代码", ""),
+                    "名称": item.get("名称", ""),
+                    "上榜日": raw.get("日期", ""),
+                    "收盘价": item.get("收盘价", 0),
+                    "涨跌幅": item.get("涨跌幅", 0),
+                    "净买额": item.get("净买额", 0),
+                    "买入额": item.get("买入额", 0),
+                    "卖出额": item.get("卖出额", 0),
+                    "成交额": 0,
+                    "换手率": item.get("换手率", 0),
+                    "上榜原因": item.get("上榜原因", ""),
+                })
+            _lhb_cache[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning("astock_data龙虎榜API失败: %s", e)
+    # AKShare备用
     try:
         from datetime import date, timedelta
         end = date.today()

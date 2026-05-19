@@ -5,7 +5,7 @@ from app.services.market_data import (
     get_sector_list, get_sector_overview, compute_consecutive_days,
     get_index_data, get_financial_abstract, get_financial_statement,
     get_stock_news, get_intraday, get_bid_ask, get_fund_flow,
-    get_minute_history, get_ranking, get_lhb,
+    get_minute_history, get_ranking, get_lhb, get_sw_industries,
 )
 from app.utils import validate_code
 
@@ -82,6 +82,12 @@ def sectors():
 @router.get("/sector-overview")
 def sector_overview():
     return get_sector_overview()
+
+
+@router.get("/industries")
+def industries():
+    """申万行业分级：31一级行业 + 131二级行业。"""
+    return get_sw_industries()
 
 
 @router.get("/consecutive/{code}")

@@ -1,0 +1,63 @@
+{
+  "session_id": "session-2026-05-19-2141",
+  "started": "2026-05-19T13:41:41.339Z",
+  "files_read": {
+    "C:/Users/gaine/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/test-driven-development/SKILL.md": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-05-19T13:42:14.711Z"
+    },
+    "e:/project/StockSimulator/frontend/src/App.css": {
+      "count": 2,
+      "tokens": 13146,
+      "first_read": "2026-05-19T13:43:06.234Z"
+    }
+  },
+  "files_written": [
+    {
+      "file": "e:/project/StockSimulator/frontend/src/index.css",
+      "action": "edit",
+      "tokens": 78,
+      "at": "2026-05-19T13:41:46.257Z"
+    },
+    {
+      "file": "e:/project/StockSimulator/frontend/src/index.css",
+      "action": "edit",
+      "tokens": 15,
+      "at": "2026-05-19T13:41:59.169Z"
+    },
+    {
+      "file": "e:/project/StockSimulator/frontend/src/App.css",
+      "action": "edit",
+      "tokens": 76,
+      "at": "2026-05-19T13:42:14.314Z"
+    },
+    {
+      "file": "e:/project/StockSimulator/frontend/src/App.css",
+      "action": "edit",
+      "tokens": 84,
+      "at": "2026-05-19T13:42:32.583Z"
+    },
+    {
+      "file": "e:/project/StockSimulator/frontend/src/App.css",
+      "action": "edit",
+      "tokens": 53,
+      "at": "2026-05-19T13:42:46.644Z"
+    },
+    {
+      "file": "e:/project/StockSimulator/frontend/src/App.css",
+      "action": "edit",
+      "tokens": 20,
+      "at": "2026-05-19T13:43:23.370Z"
+    }
+  ],
+  "edit_counts": {
+    "frontend/src/index.css": 2,
+    "frontend/src/App.css": 4
+  },
+  "anatomy_hits": 1,
+  "anatomy_misses": 1,
+  "repeated_reads_warned": 1,
+  "cerebrum_warnings": 0,
+  "stop_count": 2
+}

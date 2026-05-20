@@ -96,6 +96,10 @@ async def _ensure_tables(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE watchlist ADD COLUMN group_id INTEGER DEFAULT 1")
     except Exception:
         pass
+    try:
+        await db.execute("ALTER TABLE pending_orders ADD COLUMN avg_cost REAL NOT NULL DEFAULT 0.0")
+    except Exception:
+        pass
 
 
 async def get_account() -> dict:

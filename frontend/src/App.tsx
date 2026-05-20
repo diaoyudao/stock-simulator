@@ -521,8 +521,11 @@ function TradeButton({ code, name, price, onDone }: { code: string; name: string
     if (submitting) return;
     setSubmitting(true);
     try {
-      const fn = action === "buy" ? api.buy : api.sell as any;
-      await fn(code, name, qty);
+      if (action === "buy") {
+        await api.buy(code, name, qty);
+      } else {
+        await api.sell(code, qty);
+      }
       setOpen(false);
       setQty(100);
       onDone();

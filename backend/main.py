@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from app.routers import market, trade, ai, etf
-from app.services.market_data import cleanup_all_caches
+from app.services.market_data import cleanup_all_caches, get_spot_data
 
 app = FastAPI(title="StockSimulator", version="0.1.0")
 
@@ -30,6 +30,9 @@ async def _start_cache_cleanup():
             await asyncio.sleep(60)
             cleanup_all_caches()
     asyncio.create_task(_loop())
+    # 行情缓存预热，避免首次请求等待
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, get_spot_data)
 
 
 @app.get("/health")

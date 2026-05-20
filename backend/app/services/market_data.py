@@ -261,33 +261,241 @@ def _fetch_spot_em_direct() -> list[dict]:
 
 
 def _fetch_all_stocks() -> list[dict]:
-    """获取全市场 A 股实时行情。直接HTTP优先，AKShare备用。均失败返回旧缓存。"""
+    """获取全市场 A 股实时行情。新回退链：腾讯批量 → mootdx → 新浪 → 旧缓存。"""
     global _cached_stocks
-    # 东方财富直接HTTP（优先，稳定快速）
+    # 方案1：腾讯批量（主源，字段最全：含PE/PB/量比/换手率）
+    try:
+        data = _fetch_spot_tencent_batch()
+        if data and len(data) > 1000:
+            logger.info("腾讯批量行情成功，%d条", len(data))
+            return data
+    except Exception as e:
+        logger.warning("腾讯批量行情失败: %s", e)
+    # 方案2：mootdx TCP（降级1，绕过DNS/代理，缺PE/PB/量比）
+    try:
+        data = _fetch_spot_tdx()
+        if data and len(data) > 1000:
+            logger.info("mootdx行情成功，%d条（降级模式）", len(data))
+            return data
+    except Exception as e:
+        logger.warning("mootdx行情失败: %s", e)
+    # 方案3：新浪 getHQNodeData 全量（降级2，字段少）
+    try:
+        data = _fetch_spot_sina_hq_node()
+        if data and len(data) > 1000:
+            logger.info("新浪全量行情成功，%d条（降级模式）", len(data))
+            return data
+    except Exception as e:
+        logger.warning("新浪全量行情失败: %s", e)
+    # 方案4：东方财富 push2（可能被DNS污染，最后尝试）
     try:
         data = _fetch_spot_em_direct()
         if data:
+            logger.info("东财push2行情成功，%d条", len(data))
             return data
     except Exception as e:
-        logger.warning("东方财富直接行情API失败: %s", e)
-    # 东方财富AKShare（备用）
-    try:
-        df = ak.stock_zh_a_spot_em()
-        if df is not None and not df.empty:
-            logger.info("使用AKShare东方财富行情备用接口，%d条", len(df))
-            return _convert_ak_spot(df)
-    except Exception as e:
-        logger.warning("东方财富行情API失败: %s", e)
-    # 新浪备用
-    try:
-        df = ak.stock_zh_a_spot()
-        if df is not None and not df.empty:
-            logger.info("使用新浪行情备用接口，%d条", len(df))
-            return _convert_sina_spot(df)
-    except Exception as e:
-        logger.warning("新浪行情API失败: %s", e)
+        logger.warning("东财push2行情失败: %s", e)
     logger.warning("所有行情API失败，使用旧缓存(%d条)", len(_cached_stocks))
     return _cached_stocks
+
+
+# ─── 代码列表缓存（供腾讯批量用） ───
+
+_code_list_cache: dict = {"data": None, "ts": 0}
+_CODE_LIST_TTL = 300  # 5分钟
+
+
+def _fetch_code_list() -> list[str]:
+    """获取全市场A股代码列表。优先缓存/行情数据，降级mootdx/新浪。5分钟缓存。"""
+    now = time.time()
+    if _code_list_cache["data"] and now - _code_list_cache["ts"] < _CODE_LIST_TTL:
+        return _code_list_cache["data"]
+    # 优先：从已缓存的行情数据提取代码列表
+    if _cached_stocks and len(_cached_stocks) > 1000:
+        codes = [s["代码"] for s in _cached_stocks]
+        _code_list_cache["data"] = codes
+        _code_list_cache["ts"] = now
+        return codes
+    # 方案2：mootdx TCP 获取（1-2秒，绕过DNS/代理）
+    try:
+        client = astock_data._get_tdx_client_sync()
+        codes = []
+        for market in [0, 1]:  # 0=深市, 1=沪市
+            df = client.stocks(market=market)
+            if df is not None and not df.empty:
+                for code in df["code"]:
+                    c = str(code).zfill(6)
+                    # A股代码：深市00/30开头(排除39指数), 沪市60/68开头, 北证8开头
+                    is_ashare = False
+                    if c[:1] in ("0", "3") and not c.startswith("39"):
+                        is_ashare = True
+                    elif c[:2] in ("60", "68"):
+                        is_ashare = True
+                    elif c[:1] == "8":
+                        is_ashare = True
+                    if is_ashare:
+                        codes.append(c)
+        if len(codes) > 1000:
+            _code_list_cache["data"] = codes
+            _code_list_cache["ts"] = now
+            return codes
+    except Exception as e:
+        logger.warning("mootdx代码列表获取失败: %s", e)
+    # 方案3：新浪分页获取（串行，可能被限流）
+    codes = []
+    try:
+        for page in range(1, 80):
+            try:
+                page_codes = _fetch_sina_page_codes(page)
+                if not page_codes:
+                    break
+                codes.extend(page_codes)
+                if len(page_codes) < 80:
+                    break
+            except Exception:
+                break
+    except Exception as e:
+        logger.warning("新浪代码列表获取失败: %s", e)
+    if codes:
+        _code_list_cache["data"] = codes
+        _code_list_cache["ts"] = now
+    return _code_list_cache["data"] or codes
+
+
+def _fetch_sina_page_codes(page: int) -> list[str]:
+    """新浪单页代码列表"""
+    url = (f"https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+           f"Market_Center.getHQNodeData?page={page}&num=80&sort=symbol&asc=1"
+           f"&node=hs_a&symbol=&_s_r_a=auto")
+    r = _http_get(url, headers=_SINA_HEADERS, timeout=10)
+    data = r.json()
+    return [str(item.get("code", "")) for item in data if item.get("code")]
+
+
+def _fetch_spot_tencent_batch() -> list[dict]:
+    """腾讯批量获取全市场行情（同步），调用 astock_data._tencent_quote_sync。"""
+    codes = _fetch_code_list()
+    if not codes:
+        return []
+    return astock_data._tencent_quote_sync(codes)
+
+
+def _fetch_spot_tdx() -> list[dict]:
+    """mootdx TCP 获取全市场行情（同步），缺PE/PB/量比，标记降级。
+    直接用 mootdx stocks() 获取代码列表，不依赖新浪API。"""
+    try:
+        client = astock_data._get_tdx_client_sync()
+        # 从 mootdx 获取A股代码列表
+        codes = []
+        for market in [0, 1]:
+            try:
+                df = client.stocks(market=market)
+                if df is not None and not df.empty:
+                    for code in df["code"]:
+                        c = str(code).zfill(6)
+                        if c[:1] in ("6", "9", "0", "3", "8"):
+                            codes.append(c)
+            except Exception:
+                continue
+        if not codes:
+            return []
+        # 批量获取行情
+        result = []
+        batch_size = 500
+        for i in range(0, len(codes), batch_size):
+            batch = codes[i:i + batch_size]
+            try:
+                quotes = astock_data._tdx_quotes_sync(batch)
+                for q in quotes.values():
+                    price = q.get("最新价", 0)
+                    if price <= 0:
+                        continue
+                    s = {
+                        "代码": q["代码"], "名称": q["名称"],
+                        "最新价": price, "昨收": q["昨收"],
+                        "今开": q["今开"], "最高": q["最高"], "最低": q["最低"],
+                        "成交量": q["成交量"], "成交额": q["成交额"],
+                        "涨跌幅": q["涨跌幅"], "涨跌额": q["涨跌额"],
+                        "买一": price, "卖一": price,
+                        "换手率": 0, "市盈率-动态": 0, "市净率": 0,
+                        "总市值": 0, "流通市值": 0, "量比": 0,
+                        "振幅": 0, "涨停价": 0, "跌停价": 0,
+                        "_degraded": True,
+                    }
+                    result.append(s)
+            except Exception as e:
+                logger.warning("mootdx批量查询第%d批失败: %s", i // batch_size, e)
+                continue
+        return result
+    except Exception as e:
+        logger.warning("mootdx行情获取失败: %s", e)
+        return []
+
+
+def _fetch_spot_sina_hq_node() -> list[dict]:
+    """新浪 getHQNodeData 分页全量获取。新浪返回含PE/PB/换手率/市值，字段较全。"""
+    try:
+        total = 5500
+        pages = (total + 79) // 80
+        result = []
+        for page in range(1, min(pages + 1, 80)):
+            try:
+                page_data = _fetch_sina_page_stocks(page)
+                if not page_data:
+                    break
+                result.extend(page_data)
+                if len(page_data) < 80:
+                    break
+            except Exception:
+                break
+        return result
+    except Exception as e:
+        logger.warning("新浪全量行情获取失败: %s", e)
+        return []
+
+
+def _fetch_sina_page_stocks(page: int) -> list[dict]:
+    """新浪单页行情数据"""
+    url = (f"https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+           f"Market_Center.getHQNodeData?page={page}&num=80&sort=symbol&asc=1"
+           f"&node=hs_a&symbol=&_s_r_a=auto")
+    r = _http_get(url, headers=_SINA_HEADERS, timeout=10)
+    data = r.json()
+    result = []
+    for item in data:
+        code = str(item.get("code", ""))
+        price = _safe_float(item.get("trade", 0))
+        if price <= 0:
+            continue
+        yesterday = _safe_float(item.get("settlement", 0))
+        # 新浪字段: per=PE, pb=PB, mktcap=总市值(亿), nmc=流通市值(亿), turnoverratio=换手率
+        mktcap = _safe_float(item.get("mktcap", 0))
+        nmc = _safe_float(item.get("nmc", 0))
+        result.append({
+            "代码": code,
+            "名称": str(item.get("name", "")),
+            "最新价": price,
+            "昨收": yesterday,
+            "今开": _safe_float(item.get("open", 0)),
+            "最高": _safe_float(item.get("high", 0)),
+            "最低": _safe_float(item.get("low", 0)),
+            "涨跌额": _safe_float(item.get("pricechange", 0)),
+            "涨跌幅": _safe_float(item.get("changepercent", 0)),
+            "成交量": int(_safe_float(item.get("volume", 0))),
+            "成交额": _safe_float(item.get("amount", 0)),
+            "买一": _safe_float(item.get("buy", price)),
+            "卖一": _safe_float(item.get("sell", price)),
+            "换手率": _safe_float(item.get("turnoverratio", 0)),
+            "市盈率-动态": _safe_float(item.get("per", 0)),
+            "市净率": _safe_float(item.get("pb", 0)),
+            "总市值": mktcap * 100000000 if mktcap else 0,  # 亿→元
+            "流通市值": nmc * 100000000 if nmc else 0,
+            "量比": 0,  # 新浪无量比
+            "振幅": 0,
+            "涨停价": 0,
+            "跌停价": 0,
+        })
+    return result
 
 
 def get_spot_data() -> list[dict]:
@@ -631,8 +839,10 @@ def get_stock_detail(code: str) -> dict:
         f_consec = _executor.submit(compute_consecutive_days, code)
         f_info = _executor.submit(_fetch_stock_info, code)
 
-        # 买卖盘（新浪直接优先，AKShare备用）
+        # 买卖盘（新浪优先 → mootdx → AKShare备用）
+        # 注意：mootdx在行情刷新后连接状态不稳定，不优先使用
         bidask_ok = False
+        # 1. 新浪HTTP（快速稳定）
         try:
             bidask = _fetch_bidask_sina(code)
             if bidask:
@@ -641,6 +851,18 @@ def get_stock_detail(code: str) -> dict:
                 bidask_ok = True
         except Exception as e:
             logger.warning("新浪盘口API失败: %s", e)
+        # 2. mootdx TCP（降级，可能慢）
+        if not bidask_ok:
+            try:
+                tdx_q = astock_data._tdx_quotes_sync([code])
+                if code in tdx_q:
+                    q = tdx_q[code]
+                    s["买一"] = q.get("买一") or s["最新价"]
+                    s["卖一"] = q.get("卖一") or s["最新价"]
+                    bidask_ok = True
+            except Exception as e:
+                logger.warning("mootdx盘口API失败: %s", e)
+        # 3. AKShare（走东财push2，可能被封锁）
         if not bidask_ok:
             try:
                 bidask_df = ak.stock_bid_ask_em(symbol=code)
@@ -672,12 +894,25 @@ def get_stock_detail(code: str) -> dict:
     try:
         f_info = _executor.submit(_fetch_stock_info, code)
         bidask = None
-        # 新浪直接优先
+        # 1. 新浪HTTP 优先
         try:
             bidask = _fetch_bidask_sina(code)
         except Exception:
             pass
-        # AKShare备用
+        # 2. mootdx TCP 降级
+        if not bidask:
+            try:
+                tdx_q = astock_data._tdx_quotes_sync([code])
+                if code in tdx_q:
+                    q = tdx_q[code]
+                    bidask = {
+                        "latest": q.get("最新价", 0),
+                        "buy_1": q.get("买一", 0),
+                        "sell_1": q.get("卖一", 0),
+                    }
+            except Exception:
+                pass
+        # 3. AKShare备用
         if not bidask:
             bidask_df = ak.stock_bid_ask_em(symbol=code)
             if bidask_df is not None and not bidask_df.empty:
@@ -2235,17 +2470,17 @@ def get_bid_ask(code: str) -> dict:
             return data
     # mootdx TCP直连（优先，含完整五档）
     try:
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            quotes = pool.submit(lambda: asyncio.run(astock_data.tdx_quotes([code]))).result()
+        quotes = astock_data._tdx_quotes_sync([code])
         if quotes and code in quotes:
             q = quotes[code]
             result = {}
+            cn_nums = ["一", "二", "三", "四", "五"]
             for i in range(1, 6):
-                result[f"buy_{i}"] = q.get(f"买{i}", 0)
-                result[f"buy_{i}_vol"] = int(q.get(f"买量{i}", 0))
-                result[f"sell_{i}"] = q.get(f"卖{i}", 0)
-                result[f"sell_{i}_vol"] = int(q.get(f"卖量{i}", 0))
+                cn = cn_nums[i - 1]
+                result[f"buy_{i}"] = q.get(f"买{cn}", 0)
+                result[f"buy_{i}_vol"] = int(q.get(f"买量{cn}", 0))
+                result[f"sell_{i}"] = q.get(f"卖{cn}", 0)
+                result[f"sell_{i}_vol"] = int(q.get(f"卖量{cn}", 0))
             result["latest"] = q.get("最新价", 0)
             result["limit_up"] = 0
             result["limit_down"] = 0

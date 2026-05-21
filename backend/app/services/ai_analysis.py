@@ -1,4 +1,4 @@
-"""AI股票分析服务 — 智谱GLM API集成 + 规则评分引擎"""
+"""AI股票分析服务 — 智谱GLM API集成 + 规则评分引擎 + 多因子选股"""
 
 import json
 import os
@@ -6,12 +6,14 @@ import time
 import logging
 import asyncio
 import httpx
+import numpy as np
 from pathlib import Path
 from app.services.market_data import (
     get_stock_by_code, get_stock_history, get_fund_flow,
     get_financial_abstract, get_stock_news, BoundedCache,
     _safe_float, compute_consecutive_days, _all_caches,
     get_etf_by_code, get_etf_history, get_etf_fund_flow,
+    get_spot_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -371,5 +373,209 @@ def _compute_score(code: str) -> dict:
             "overall": overall,
         },
         "capital_detail": capital_detail,
+        "disclaimer": DISCLAIMER,
+    }
+
+
+# ─── 多因子智能选股引擎 ───
+
+# 因子定义: (字段名, 方向, 权重)
+# 方向: "asc"=越小越好(如PE), "desc"=越大越好(如涨跌幅)
+_DEFAULT_FACTORS = [
+    ("momentum", "desc", 15),       # 当日涨跌幅（动量）
+    ("volume_ratio", "desc", 12),   # 量比（资金关注度）
+    ("turnover", "desc", 10),       # 换手率（流动性）
+    ("pe_score", "desc", 15),       # PE估值分（低PE高分）
+    ("pb_score", "desc", 10),       # PB估值分
+    ("amplitude", "desc", 8),       # 振幅（波动活跃度）
+    ("liquidity", "desc", 10),      # 成交额/市值比（换手效率）
+    ("size_score", "desc", 20),     # 市值因子（低价股偏好适中市值）
+]
+
+_screen_cache: BoundedCache = BoundedCache(32)
+_SCREEN_TTL = 120  # 2分钟缓存
+
+
+def _normalize(values: list[float], direction: str = "desc") -> list[float]:
+    """Min-max归一化到[0,100]。direction='desc'时大值高分。"""
+    arr = np.array(values, dtype=float)
+    vmin, vmax = arr.min(), arr.max()
+    if vmax == vmin:
+        return [50.0] * len(values)
+    norm = (arr - vmin) / (vmax - vmin) * 100
+    if direction == "asc":
+        norm = 100 - norm
+    return norm.tolist()
+
+
+async def screen_stocks(
+    min_price: float = 1.0,
+    max_price: float = 5.0,
+    top_n: int = 30,
+    factor_weights: dict | None = None,
+    exclude_st: bool = True,
+) -> dict:
+    """多因子智能选股。基于行情数据的8因子加权打分排序。
+
+    因子说明:
+    - momentum: 当日涨跌幅，反映短期动量
+    - volume_ratio: 量比，反映资金关注度异动
+    - turnover: 换手率，反映流动性
+    - pe_score: PE估值分，低PE→高分（负PE扣分）
+    - pb_score: PB估值分，低PB→高分
+    - amplitude: 当日振幅，反映波动活跃度
+    - liquidity: 成交额/总市值，反映交易活跃效率
+    - size_score: 市值因子，适中市值加分（避免过小过大）
+    """
+    now = time.time()
+    cache_key = f"{min_price}:{max_price}:{top_n}:{exclude_st}"
+    if cache_key in _screen_cache:
+        ts, data = _screen_cache[cache_key]
+        if now - ts < _SCREEN_TTL:
+            return data
+
+    # 在线程池中执行计算（纯CPU+数据读取）
+    result = await asyncio.to_thread(
+        _screen_compute, min_price, max_price, top_n, factor_weights, exclude_st
+    )
+    if "error" not in result:
+        _screen_cache[cache_key] = (now, result)
+    return result
+
+
+def _screen_compute(
+    min_price: float, max_price: float, top_n: int,
+    factor_weights: dict | None, exclude_st: bool,
+) -> dict:
+    """同步：多因子选股核心计算。"""
+    stocks = get_spot_data()
+    if not stocks:
+        return {"error": "暂无行情数据"}
+
+    # 基础筛选：价格区间 + 排除ST
+    pool = []
+    for s in stocks:
+        price = s.get("最新价", 0)
+        if not (min_price <= price <= max_price):
+            continue
+        if exclude_st and ("ST" in s.get("名称", "") or "st" in s.get("名称", "")):
+            continue
+        pool.append(s)
+
+    if len(pool) < 5:
+        return {"error": f"筛选后仅{len(pool)}只股票，不足5只无法排序", "pool_size": len(pool)}
+
+    # 提取各因子原始值
+    n = len(pool)
+    factors = {name: [] for name, _, _ in _DEFAULT_FACTORS}
+
+    for s in pool:
+        price = s.get("最新价", 0)
+        prev_close = s.get("昨收", price)
+        high = s.get("最高", price)
+        low = s.get("最低", price)
+        change_pct = s.get("涨跌幅", 0)
+        vol_ratio = s.get("量比", 1.0) or 1.0
+        turnover = s.get("换手率", 0) or 0
+        pe = s.get("市盈率-动态", s.get("市盈率", 999)) or 999
+        pb = s.get("市净率", 999) or 999
+        amount = s.get("成交额", 0) or 0
+        mktcap = s.get("总市值", 1) or 1
+
+        # 振幅
+        amp = ((high - low) / prev_close * 100) if prev_close > 0 else 0
+
+        # PE评分：PE<0→0分, 0<PE<15→100分线性递减, PE>50→0分
+        if pe < 0:
+            pe_s = 0
+        elif pe < 15:
+            pe_s = 100
+        elif pe <= 50:
+            pe_s = round((50 - pe) / 35 * 100)
+        else:
+            pe_s = 0
+
+        # PB评分：PB<0→0分, 0<PB<1.5→100分递减, PB>5→0分
+        if pb < 0:
+            pb_s = 0
+        elif pb < 1.5:
+            pb_s = 100
+        elif pb <= 5:
+            pb_s = round((5 - pb) / 3.5 * 100)
+        else:
+            pb_s = 0
+
+        # 流动性：成交额/市值
+        liq = (amount / mktcap * 100) if mktcap > 0 else 0
+
+        # 市值因子：低价股偏好10-50亿（适中），太小<5亿扣分，太大>200亿扣分
+        mktcap_yi = mktcap / 1e8
+        if 10 <= mktcap_yi <= 50:
+            size_s = 100
+        elif 5 <= mktcap_yi < 10:
+            size_s = 70 + (mktcap_yi - 5) / 5 * 30
+        elif 50 < mktcap_yi <= 200:
+            size_s = 100 - (mktcap_yi - 50) / 150 * 60
+        else:
+            size_s = 10
+
+        factors["momentum"].append(change_pct)
+        factors["volume_ratio"].append(min(vol_ratio, 10))  # 截断极端值
+        factors["turnover"].append(min(turnover, 30))
+        factors["pe_score"].append(pe_s)
+        factors["pb_score"].append(pb_s)
+        factors["amplitude"].append(min(amp, 20))
+        factors["liquidity"].append(min(liq, 10))
+        factors["size_score"].append(size_s)
+
+    # 归一化每个因子到[0,100]
+    weights = factor_weights or {name: w for name, _, w in _DEFAULT_FACTORS}
+    norm_factors = {}
+    for name, direction, _ in _DEFAULT_FACTORS:
+        norm_factors[name] = _normalize(factors[name], direction)
+
+    # 加权综合得分
+    composite = [0.0] * n
+    for i in range(n):
+        score = 0.0
+        total_w = 0
+        for name, _, default_w in _DEFAULT_FACTORS:
+            w = weights.get(name, default_w)
+            score += norm_factors[name][i] * w
+            total_w += w
+        composite[i] = round(score / total_w, 1) if total_w > 0 else 0
+
+    # 排序取top-n
+    ranked_indices = sorted(range(n), key=lambda i: composite[i], reverse=True)
+    top_k = ranked_indices[:min(top_n, n)]
+
+    results = []
+    for idx in top_k:
+        s = pool[idx]
+        item = {
+            "代码": s.get("代码", ""),
+            "名称": s.get("名称", ""),
+            "最新价": s.get("最新价", 0),
+            "涨跌幅": s.get("涨跌幅", 0),
+            "综合得分": composite[idx],
+            "因子明细": {
+                "动量": round(norm_factors["momentum"][idx], 1),
+                "量比": round(norm_factors["volume_ratio"][idx], 1),
+                "换手": round(norm_factors["turnover"][idx], 1),
+                "PE估值": round(norm_factors["pe_score"][idx], 1),
+                "PB估值": round(norm_factors["pb_score"][idx], 1),
+                "振幅": round(norm_factors["amplitude"][idx], 1),
+                "流动性": round(norm_factors["liquidity"][idx], 1),
+                "市值": round(norm_factors["size_score"][idx], 1),
+            },
+        }
+        results.append(item)
+
+    return {
+        "pool_size": n,
+        "top_n": len(results),
+        "factors_used": [name for name, _, _ in _DEFAULT_FACTORS],
+        "weights": weights,
+        "results": results,
         "disclaimer": DISCLAIMER,
     }

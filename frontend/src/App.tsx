@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, type StockItem, type StockDetail as StockDetailType, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder, type EtfItem } from "./api";
 import { createChart, LineSeries, type IChartApi, ColorType } from "lightweight-charts";
 import { toast, Toast, ToastProvider, usePolling, TradingTimeProvider, useTradingTime } from "./utils/shared";
@@ -64,7 +64,7 @@ function SearchSelect({ value, onChange, options, placeholder }: {
     </div>
   );
 }
-type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions";
+type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions" | "aiscreen";
 
 export default function App() {
   return (
@@ -225,16 +225,17 @@ function AppInner() {
         <NotificationBell />
       </header>
       <nav className="tabs">
-        {(["market", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
+        {(["market", "aiscreen", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
-            <span className="tab-icon">{t === "market" ? "📊" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
-            <span className="tab-label">{t === "market" ? "行情" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "aiscreen" ? "🤖" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "aiscreen" ? "AI精选" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
         <button className="tab reset" onClick={() => { if (confirm("确定重置账户？所有持仓和交易记录将被清除！")) { api.reset().then(refresh); } }}>重置</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} pendingFilter={pendingFilter} onFilterApplied={() => setPendingFilter(null)} />}
+        {tab === "aiscreen" && <AiScreenTab onSelectStock={setSelectedStock} />}
         {tab === "etf" && <EtfTab onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectSector={(f) => { setTab("market"); setPendingFilter(f); }} onSelectStock={setSelectedStock} />}
@@ -1093,7 +1094,8 @@ function AnalysisTab() {
         lineWidth: 2,
         title: "总资产",
       });
-      totalLine.setData(snapshots.map((s) => ({ time: s.date, value: s.total })));
+      const sorted = [...snapshots].sort((a, b) => a.date.localeCompare(b.date));
+      totalLine.setData(sorted.map((s) => ({ time: s.date, value: s.total })));
 
       // 基准线（初始资金10万）
       const baseline = chart.addSeries(LineSeries, {
@@ -1104,7 +1106,7 @@ function AnalysisTab() {
         lastValueVisible: false,
         title: "初始资金",
       });
-      baseline.setData(snapshots.map((s) => ({ time: s.date, value: 100000 })));
+      baseline.setData(sorted.map((s) => ({ time: s.date, value: 100000 })));
 
       chart.timeScale().fitContent();
     });
@@ -1203,3 +1205,122 @@ function AnalysisTab() {
     </div>
   );
 }
+
+function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void }) {
+  const [data, setData] = useState<AIScreenResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [minPrice, setMinPrice] = useState(1);
+  const [maxPrice, setMaxPrice] = useState(5);
+  const [topN, setTopN] = useState(30);
+  const [excludeSt, setExcludeSt] = useState(true);
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+
+  const fetchScreen = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.screenStocks(minPrice, maxPrice, topN, excludeSt) as any;
+      if (res.error) { toast(res.error); return; }
+      setData(res);
+    } catch (e: any) { toast(e?.detail || "选股失败"); }
+    finally { setLoading(false); }
+  }, [minPrice, maxPrice, topN, excludeSt]);
+
+  useEffect(() => { fetchScreen(); }, []);
+
+  return (
+    <div className="aiscreen-tab">
+      <div className="aiscreen-header">
+        <h2>AI 智能选股</h2>
+        <p className="aiscreen-desc">8因子加权打分排序，基于实时行情数据</p>
+        <div className="aiscreen-controls">
+          <label>价格区间
+            <input type="number" value={minPrice} min={0.1} step={0.5} onChange={e => setMinPrice(Number(e.target.value))} />
+            -
+            <input type="number" value={maxPrice} min={0.5} step={0.5} onChange={e => setMaxPrice(Number(e.target.value))} /> 元
+          </label>
+          <label>Top
+            <select value={topN} onChange={e => setTopN(Number(e.target.value))}>
+              {[10, 20, 30, 50].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <label><input type="checkbox" checked={excludeSt} onChange={e => setExcludeSt(e.target.checked)} /> 排除ST</label>
+          <button className="detail-buy" onClick={fetchScreen} disabled={loading}>
+            {loading ? "计算中..." : "重新筛选"}
+          </button>
+        </div>
+      </div>
+
+      {data && !data.error && (
+        <>
+          <div className="aiscreen-summary">
+            <span>候选池: <b>{data.pool_size}</b> 只</span>
+            <span>因子: {data.factors_used.map(f => factorLabel[f] || f).join(" / ")}</span>
+            <span className="disclaimer">{data.disclaimer}</span>
+          </div>
+
+          <div className="table-wrap">
+            <table className="stock-table aiscreen-table">
+              <thead>
+                <tr>
+                  <th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th>
+                  <th>综合得分</th><th>动量</th><th>量比</th><th>PE</th><th>PB</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.results.map((item, i) => (
+                  <React.Fragment key={item["代码"]}>
+                    <tr className={expandedCode === item["代码"] ? "expanded" : ""} onClick={() => setExpandedCode(expandedCode === item["代码"] ? null : item["代码"])}>
+                      <td className="rank">#{i + 1}</td>
+                      <td>{item["代码"]}</td>
+                      <td>{item["名称"]}</td>
+                      <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["最新价"]?.toFixed(2)}</td>
+                      <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["涨跌幅"] > 0 ? "+" : ""}{item["涨跌幅"]?.toFixed(2)}%</td>
+                      <td><span className={`score-badge ${item["综合得分"] >= 60 ? "high" : item["综合得分"] >= 40 ? "mid" : "low"}`}>{item["综合得分"]}</span></td>
+                      <td><FactorBar value={(item["因子明细"] || {})["动量"]} /></td>
+                      <td><FactorBar value={(item["因子明细"] || {})["量比"]} /></td>
+                      <td><FactorBar value={(item["因子明细"] || {})["PE估值"]} /></td>
+                      <td><FactorBar value={(item["因子明细"] || {})["PB估值"]} /></td>
+                      <td><button className="detail-buy" onClick={e => { e.stopPropagation(); onSelectStock(item["代码"]); }}>查看</button></td>
+                    </tr>
+                    {expandedCode === item["代码"] && (
+                      <tr className="factor-detail-row">
+                        <td colSpan={11}>
+                          <div className="factor-detail">
+                            <h4>{item["名称"]}({item["代码"]}) 因子明细</h4>
+                            <div className="factor-bars">
+                              {Object.entries(item["因子明细"] || {}).map(([k, v]) => (
+                                <div key={k} className="factor-item">
+                                  <span className="factor-name">{k}</span>
+                                  <div className="factor-bar-outer"><div className="factor-bar-inner" style={{ width: `${Math.max(0, Number(v))}%` }} /></div>
+                                  <span className="factor-val">{v}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {!data && !loading && <div className="empty">点击"重新筛选"开始AI选股</div>}
+      {loading && <div className="loading">正在计算{data?.pool_size || "..."}只股票的因子得分...</div>}
+    </div>
+  );
+}
+
+function FactorBar({ value }: { value: number }) {
+  const cls = value >= 70 ? "high" : value >= 40 ? "mid" : "low";
+  return <span className={`factor-mini ${cls}`} style={{ width: `${Math.max(4, value)}px` }} title={`${value}`}></span>;
+}
+
+const factorLabel: Record<string, string> = {
+  momentum: "动量", volume_ratio: "量比", turnover: "换手",
+  pe_score: "PE估值", pb_score: "PB估值", amplitude: "振幅",
+  liquidity: "流动性", size_score: "市值",
+};

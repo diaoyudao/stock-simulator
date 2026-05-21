@@ -376,6 +376,34 @@ export interface AIScore {
   error?: string;
 }
 
+export interface AIScreenResult {
+  pool_size: number;
+  top_n: number;
+  factors_used: string[];
+  weights: Record<string, number>;
+  results: AIScreenItem[];
+  disclaimer: string;
+  error?: string;
+}
+
+export interface AIScreenItem {
+  "代码": string;
+  "名称": string;
+  "最新价": number;
+  "涨跌幅": number;
+  "综合得分": number;
+  "因子明细": {
+    "动量": number;
+    "量比": number;
+    "换手": number;
+    "PE估值": number;
+    "PB估值": number;
+    "振幅": number;
+    "流动性": number;
+    "市值": number;
+  };
+}
+
 export const api = {
   // ─── ETF ───
   getEtfSpot: (params: Record<string, string | number>) => {
@@ -554,4 +582,8 @@ export const api = {
     request<AIAnalysis>(`/ai/analyze/${code}`),
   getAIScore: (code: string) =>
     request<AIScore>(`/ai/score/${code}`),
+  screenStocks: (minPrice = 1, maxPrice = 5, topN = 30, excludeSt = true) => {
+    invalidateCache("/ai/screen");
+    return request<AIScreenResult>(`/ai/screen?min_price=${minPrice}&max_price=${maxPrice}&top_n=${topN}&exclude_st=${excludeSt}`);
+  },
 };

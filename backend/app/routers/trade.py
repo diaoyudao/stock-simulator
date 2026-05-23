@@ -150,18 +150,22 @@ async def positions():
     positions = await get_positions()
     try:
         price_map = await _build_price_map_async()
+        spot_map = {s["代码"]: s for s in await asyncio.to_thread(get_spot_data)}
         for pos in positions:
             current_price = price_map.get(pos["code"], pos["avg_cost"])
             pos["current_price"] = current_price
             pos["market_value"] = round(current_price * pos["quantity"], 2)
             pos["profit"] = round((current_price - pos["avg_cost"]) * pos["quantity"], 2)
             pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] > 0 else 0.0
+            spot = spot_map.get(pos["code"])
+            pos["change_pct"] = spot["涨跌幅"] if spot else 0.0
     except Exception:
         for pos in positions:
             pos["current_price"] = pos["avg_cost"]
             pos["market_value"] = round(pos["avg_cost"] * pos["quantity"], 2)
             pos["profit"] = 0.0
             pos["profit_pct"] = 0.0
+            pos["change_pct"] = 0.0
     return positions
 
 
@@ -210,8 +214,10 @@ async def dashboard():
     positions_raw = await get_positions()
     try:
         price_map = await _build_price_map_async()
+        spot_map = {s["代码"]: s for s in await asyncio.to_thread(get_spot_data)}
     except Exception:
         price_map = {}
+        spot_map = {}
 
     # 计算持仓市值（复用 price_map）
     for pos in positions_raw:
@@ -220,6 +226,8 @@ async def dashboard():
         pos["market_value"] = round(current_price * pos["quantity"], 2)
         pos["profit"] = round((current_price - pos["avg_cost"]) * pos["quantity"], 2)
         pos["profit_pct"] = round((current_price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] > 0 else 0.0
+        spot = spot_map.get(pos["code"])
+        pos["change_pct"] = spot["涨跌幅"] if spot else 0.0
 
     market_value = sum(
         price_map.get(p["code"], p["avg_cost"]) * p["quantity"]

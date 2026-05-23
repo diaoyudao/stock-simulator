@@ -392,6 +392,32 @@ _DEFAULT_FACTORS = [
     ("size_score", "desc", 20),     # 市值因子（低价股偏好适中市值）
 ]
 
+# 策略预设：名称、因子权重、额外过滤条件、因子中文标签映射
+_STRATEGIES = {
+    "balanced": {
+        "name": "综合打分",
+        "weights": {"momentum": 15, "volume_ratio": 12, "turnover": 10,
+                    "pe_score": 15, "pb_score": 10, "amplitude": 8,
+                    "liquidity": 10, "size_score": 20},
+        "filters": {},
+        "factor_labels": {"动量": "momentum", "量比": "volume_ratio", "换手": "turnover",
+                          "PE估值": "pe_score", "PB估值": "pb_score", "振幅": "amplitude",
+                          "流动性": "liquidity", "市值": "size_score"},
+        "top_factors": ["动量", "量比", "PE估值", "PB估值"],
+    },
+    "oversold_bounce": {
+        "name": "超跌反弹",
+        "weights": {"oversold_depth": 25, "bounce_signal": 20,
+                    "volume_ratio": 15, "size_score": 20, "amplitude": 10,
+                    "pb_score": 5, "pe_score": 3, "turnover": 2},
+        "filters": {"max_price_change": 5, "max_market_cap_yi": 80},
+        "factor_labels": {"超跌深度": "oversold_depth", "反弹信号": "bounce_signal",
+                          "量比": "volume_ratio", "市值": "size_score", "振幅": "amplitude",
+                          "PB估值": "pb_score", "PE估值": "pe_score", "换手": "turnover"},
+        "top_factors": ["超跌深度", "反弹信号", "量比", "市值"],
+    },
+}
+
 _screen_cache: BoundedCache = BoundedCache(32)
 _SCREEN_TTL = 120  # 2分钟缓存
 
@@ -414,29 +440,23 @@ async def screen_stocks(
     top_n: int = 30,
     factor_weights: dict | None = None,
     exclude_st: bool = True,
+    strategy: str = "balanced",
 ) -> dict:
-    """多因子智能选股。基于行情数据的8因子加权打分排序。
+    """多因子智能选股。支持策略模式切换。
 
-    因子说明:
-    - momentum: 当日涨跌幅，反映短期动量
-    - volume_ratio: 量比，反映资金关注度异动
-    - turnover: 换手率，反映流动性
-    - pe_score: PE估值分，低PE→高分（负PE扣分）
-    - pb_score: PB估值分，低PB→高分
-    - amplitude: 当日振幅，反映波动活跃度
-    - liquidity: 成交额/总市值，反映交易活跃效率
-    - size_score: 市值因子，适中市值加分（避免过小过大）
+    策略:
+    - balanced: 综合打分（默认8因子均衡）
+    - oversold_bounce: 超跌反弹小市值（连跌+放量企稳+小盘）
     """
     now = time.time()
-    cache_key = f"{min_price}:{max_price}:{top_n}:{exclude_st}"
+    cache_key = f"{min_price}:{max_price}:{top_n}:{exclude_st}:{strategy}"
     if cache_key in _screen_cache:
         ts, data = _screen_cache[cache_key]
         if now - ts < _SCREEN_TTL:
             return data
 
-    # 在线程池中执行计算（纯CPU+数据读取）
     result = await asyncio.to_thread(
-        _screen_compute, min_price, max_price, top_n, factor_weights, exclude_st
+        _screen_compute, min_price, max_price, top_n, factor_weights, exclude_st, strategy
     )
     if "error" not in result:
         _screen_cache[cache_key] = (now, result)
@@ -445,14 +465,18 @@ async def screen_stocks(
 
 def _screen_compute(
     min_price: float, max_price: float, top_n: int,
-    factor_weights: dict | None, exclude_st: bool,
+    factor_weights: dict | None, exclude_st: bool, strategy: str,
 ) -> dict:
     """同步：多因子选股核心计算。"""
+    strat = _STRATEGIES.get(strategy, _STRATEGIES["balanced"])
+    strat_weights = factor_weights or strat["weights"]
+    strat_filters = strat.get("filters", {})
+
     stocks = get_spot_data()
     if not stocks:
         return {"error": "暂无行情数据"}
 
-    # 基础筛选：价格区间 + 排除ST
+    # 基础筛选：价格区间 + 排除ST + 策略额外过滤
     pool = []
     for s in stocks:
         price = s.get("最新价", 0)
@@ -460,14 +484,23 @@ def _screen_compute(
             continue
         if exclude_st and ("ST" in s.get("名称", "") or "st" in s.get("名称", "")):
             continue
+        # 策略过滤：连跌天数、涨幅上限、市值上限
+        pc = s.get("涨跌幅", 0) or 0
+        max_pc = strat_filters.get("max_price_change", 999)
+        if max_pc < pc:
+            continue
+        mc = s.get("总市值", 0) or 0
+        max_mc = strat_filters.get("max_market_cap_yi", 0)
+        if max_mc > 0 and mc / 1e8 > max_mc:
+            continue
         pool.append(s)
 
-    if len(pool) < 5:
-        return {"error": f"筛选后仅{len(pool)}只股票，不足5只无法排序", "pool_size": len(pool)}
+    if len(pool) < 3:
+        return {"error": f"筛选后仅{len(pool)}只股票，不足3只", "pool_size": len(pool)}
 
-    # 提取各因子原始值
-    n = len(pool)
-    factors = {name: [] for name, _, _ in _DEFAULT_FACTORS}
+    # 提取各因子原始值 — 包含所有可能因子（默认8个 + 策略特有）
+    all_factor_keys = list({*strat_weights.keys(), *(n for n, _, _ in _DEFAULT_FACTORS)})
+    factors = {k: [] for k in all_factor_keys}
 
     for s in pool:
         price = s.get("最新价", 0)
@@ -482,10 +515,9 @@ def _screen_compute(
         amount = s.get("成交额", 0) or 0
         mktcap = s.get("总市值", 1) or 1
 
-        # 振幅
         amp = ((high - low) / prev_close * 100) if prev_close > 0 else 0
 
-        # PE评分：PE<0→0分, 0<PE<15→100分线性递减, PE>50→0分
+        # PE/PB评分（同前）
         if pe < 0:
             pe_s = 0
         elif pe < 15:
@@ -495,7 +527,6 @@ def _screen_compute(
         else:
             pe_s = 0
 
-        # PB评分：PB<0→0分, 0<PB<1.5→100分递减, PB>5→0分
         if pb < 0:
             pb_s = 0
         elif pb < 1.5:
@@ -505,10 +536,8 @@ def _screen_compute(
         else:
             pb_s = 0
 
-        # 流动性：成交额/市值
         liq = (amount / mktcap * 100) if mktcap > 0 else 0
 
-        # 市值因子：低价股偏好10-50亿（适中），太小<5亿扣分，太大>200亿扣分
         mktcap_yi = mktcap / 1e8
         if 10 <= mktcap_yi <= 50:
             size_s = 100
@@ -519,63 +548,88 @@ def _screen_compute(
         else:
             size_s = 10
 
-        factors["momentum"].append(change_pct)
-        factors["volume_ratio"].append(min(vol_ratio, 10))  # 截断极端值
-        factors["turnover"].append(min(turnover, 30))
-        factors["pe_score"].append(pe_s)
-        factors["pb_score"].append(pb_s)
-        factors["amplitude"].append(min(amp, 20))
-        factors["liquidity"].append(min(liq, 10))
-        factors["size_score"].append(size_s)
+        # ── 默认8因子 ──
+        factors.setdefault("momentum", []).append(change_pct)
+        factors.setdefault("volume_ratio", []).append(min(vol_ratio, 10))
+        factors.setdefault("turnover", []).append(min(turnover, 30))
+        factors.setdefault("pe_score", []).append(pe_s)
+        factors.setdefault("pb_score", []).append(pb_s)
+        factors.setdefault("amplitude", []).append(min(amp, 20))
+        factors.setdefault("liquidity", []).append(min(liq, 10))
+        factors.setdefault("size_score", []).append(size_s)
 
-    # 归一化每个因子到[0,100]
-    weights = factor_weights or {name: w for name, _, w in _DEFAULT_FACTORS}
+        # ── 超跌反弹特有因子 ──
+        # 超跌深度：今日跌幅越大分越高（超跌=机会），用反转映射
+        oversold = max(0, min(100, -change_pct * 10))  # -5%→50分, -10%→100分
+        # 额外加分：接近跌停(-9%以上)说明恐慌性抛售，反弹概率高
+        if change_pct <= -9:
+            oversold = 100
+        elif change_pct <= -5:
+            oversold = max(oversold, 70)
+        factors.setdefault("oversold_depth", []).append(oversold)
+
+        # 反弹信号复合分：止跌/微涨(50) + 放量(30) + 振幅活跃(20)
+        bounce = 0
+        if change_pct > -2:
+            bounce += 50  # 今日未大跌，有止跌迹象
+        if change_pct > 0:
+            bounce += 15  # 已经翻红更好
+        if vol_ratio > 1.5:
+            bounce += 30  # 放量确认资金进场
+        if amp > 3:
+            bounce += 20  # 振幅放大说明多空博弈激烈
+        factors.setdefault("bounce_signal", []).append(bounce)
+
+    # 因子方向映射
+    _FACTOR_DIRECTIONS = {
+        "momentum": "desc", "volume_ratio": "desc", "turnover": "desc",
+        "pe_score": "desc", "pb_score": "desc", "amplitude": "desc",
+        "liquidity": "desc", "size_score": "desc",
+        "oversold_depth": "desc", "bounce_signal": "desc",
+    }
+
+    # 归一化
     norm_factors = {}
-    for name, direction, _ in _DEFAULT_FACTORS:
-        norm_factors[name] = _normalize(factors[name], direction)
+    for key in factors:
+        norm_factors[key] = _normalize(factors[key], _FACTOR_DIRECTIONS.get(key, "desc"))
 
-    # 加权综合得分
+    n = len(pool)
     composite = [0.0] * n
-    for i in range(n):
-        score = 0.0
-        total_w = 0
-        for name, _, default_w in _DEFAULT_FACTORS:
-            w = weights.get(name, default_w)
-            score += norm_factors[name][i] * w
-            total_w += w
-        composite[i] = round(score / total_w, 1) if total_w > 0 else 0
+    active_keys = [k for k in strat_weights if k in norm_factors]
+    total_w = sum(strat_weights.get(k, 0) for k in active_keys) or 1
 
-    # 排序取top-n
+    for i in range(n):
+        score = sum(norm_factors[k][i] * strat_weights.get(k, 0) for k in active_keys)
+        composite[i] = round(score / total_w, 1)
+
     ranked_indices = sorted(range(n), key=lambda i: composite[i], reverse=True)
     top_k = ranked_indices[:min(top_n, n)]
 
+    # 构建结果 — 动态因子标签
+    factor_labels = strat.get("factor_labels", {})
     results = []
     for idx in top_k:
         s = pool[idx]
-        item = {
+        detail = {}
+        for cn_name, en_key in factor_labels.items():
+            if en_key in norm_factors:
+                detail[cn_name] = round(norm_factors[en_key][idx], 1)
+        results.append({
             "代码": s.get("代码", ""),
             "名称": s.get("名称", ""),
             "最新价": s.get("最新价", 0),
             "涨跌幅": s.get("涨跌幅", 0),
             "综合得分": composite[idx],
-            "因子明细": {
-                "动量": round(norm_factors["momentum"][idx], 1),
-                "量比": round(norm_factors["volume_ratio"][idx], 1),
-                "换手": round(norm_factors["turnover"][idx], 1),
-                "PE估值": round(norm_factors["pe_score"][idx], 1),
-                "PB估值": round(norm_factors["pb_score"][idx], 1),
-                "振幅": round(norm_factors["amplitude"][idx], 1),
-                "流动性": round(norm_factors["liquidity"][idx], 1),
-                "市值": round(norm_factors["size_score"][idx], 1),
-            },
-        }
-        results.append(item)
+            "因子明细": detail,
+        })
 
     return {
         "pool_size": n,
         "top_n": len(results),
-        "factors_used": [name for name, _, _ in _DEFAULT_FACTORS],
-        "weights": weights,
+        "factors_used": list(factor_labels.keys()),
+        "weights": {cn: strat_weights.get(en, 0) for cn, en in factor_labels.items()},
+        "strategy_name": strat["name"],
+        "top_factors": strat.get("top_factors", []),
         "results": results,
         "disclaimer": DISCLAIMER,
     }

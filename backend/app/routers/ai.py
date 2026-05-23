@@ -18,14 +18,16 @@ async def screen(
     max_price: float = Query(5.0, ge=0.1, le=100),
     top_n: int = Query(30, ge=1, le=100),
     exclude_st: bool = Query(True),
+    strategy: str = Query("balanced"),
 ):
-    """多因子智能选股 — 8因子加权打分排序。"""
+    """多因子智能选股 — 支持策略模式(balanced/oversold_bounce)。"""
     client_ip = request.client.host if request.client else "unknown"
     if not _screen_limiter.is_allowed(client_ip):
         raise HTTPException(status_code=429, detail="选股请求过于频繁，请稍后再试")
     return await screen_stocks(
         min_price=min_price, max_price=max_price,
         top_n=top_n, exclude_st=exclude_st,
+        strategy=strategy,
     )
 
 

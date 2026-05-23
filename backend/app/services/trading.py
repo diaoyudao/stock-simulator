@@ -91,6 +91,47 @@ async def _ensure_tables(db: aiosqlite.Connection):
             triggered_at REAL,
             message TEXT
         );
+        CREATE TABLE IF NOT EXISTS auto_trading_config (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            strategy TEXT NOT NULL DEFAULT 'oversold_bounce',
+            max_position_pct REAL NOT NULL DEFAULT 10.0,
+            max_daily_buy_pct REAL NOT NULL DEFAULT 30.0,
+            max_positions INTEGER NOT NULL DEFAULT 10,
+            stop_loss_tier1 REAL NOT NULL DEFAULT -5.0,
+            stop_loss_tier2 REAL NOT NULL DEFAULT -10.0,
+            take_profit_tier1 REAL NOT NULL DEFAULT 10.0,
+            take_profit_tier2 REAL NOT NULL DEFAULT 20.0,
+            max_drawdown_pct REAL NOT NULL DEFAULT 15.0,
+            consecutive_loss_limit INTEGER NOT NULL DEFAULT 3,
+            monitor_interval_sec INTEGER NOT NULL DEFAULT 300,
+            screen_top_n INTEGER NOT NULL DEFAULT 3,
+            min_price REAL NOT NULL DEFAULT 1.0,
+            max_price REAL NOT NULL DEFAULT 8.0,
+            peak_total_assets REAL NOT NULL DEFAULT 0.0,
+            consecutive_losses INTEGER NOT NULL DEFAULT 0,
+            daily_bought_amount REAL NOT NULL DEFAULT 0.0,
+            daily_bought_date TEXT NOT NULL DEFAULT '',
+            last_opening_bell_run TEXT NOT NULL DEFAULT '',
+            last_monitor_run REAL NOT NULL DEFAULT 0.0,
+            updated_at REAL NOT NULL DEFAULT 0.0
+        );
+        INSERT OR IGNORE INTO auto_trading_config (id, enabled, updated_at) VALUES (1, 0, 0);
+        CREATE TABLE IF NOT EXISTS auto_trade_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type TEXT NOT NULL CHECK(run_type IN ('opening_bell','intraday_monitor','manual')),
+            action TEXT NOT NULL CHECK(action IN ('screen','buy','sell','skip','error','circuit_break')),
+            code TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL DEFAULT '',
+            quantity INTEGER NOT NULL DEFAULT 0,
+            price REAL NOT NULL DEFAULT 0.0,
+            amount REAL NOT NULL DEFAULT 0.0,
+            reason TEXT NOT NULL DEFAULT '',
+            signal_data TEXT NOT NULL DEFAULT '',
+            success INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auto_log_created ON auto_trade_log(created_at);
     """)
     try:
         await db.execute("ALTER TABLE watchlist ADD COLUMN group_id INTEGER DEFAULT 1")

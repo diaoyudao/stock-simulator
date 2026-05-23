@@ -64,7 +64,7 @@ function SearchSelect({ value, onChange, options, placeholder }: {
     </div>
   );
 }
-type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions" | "aiscreen";
+type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions" | "aiscreen" | "autotrade";
 
 export default function App() {
   return (
@@ -225,10 +225,10 @@ function AppInner() {
         <NotificationBell />
       </header>
       <nav className="tabs">
-        {(["market", "aiscreen", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
+        {(["market", "aiscreen", "autotrade", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
-            <span className="tab-icon">{t === "market" ? "📊" : t === "aiscreen" ? "🤖" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
-            <span className="tab-label">{t === "market" ? "行情" : t === "aiscreen" ? "AI精选" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "aiscreen" ? "🤖" : t === "autotrade" ? "⚡" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "aiscreen" ? "AI精选" : t === "autotrade" ? "自动交易" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
         <button className="tab reset" onClick={() => { if (confirm("确定重置账户？所有持仓和交易记录将被清除！")) { api.reset().then(refresh); } }}>重置</button>
@@ -236,6 +236,7 @@ function AppInner() {
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} pendingFilter={pendingFilter} onFilterApplied={() => setPendingFilter(null)} />}
         {tab === "aiscreen" && <AiScreenTab onSelectStock={setSelectedStock} />}
+        {tab === "autotrade" && <AutoTradeTab onTrade={refresh} />}
         {tab === "etf" && <EtfTab onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "watchlist" && <WatchlistTab onSelectStock={setSelectedStock} onTrade={refresh} />}
         {tab === "sectors" && <SectorsTab onSelectSector={(f) => { setTab("market"); setPendingFilter(f); }} onSelectStock={setSelectedStock} />}
@@ -567,7 +568,7 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
   return (
     <div className="table-wrap"><table className="stock-table">
       <thead>
-        <tr><th>代码</th><th>名称</th><th>持仓</th><th>成本</th><th>现价</th><th>盈亏</th><th>盈亏%</th><th>操作</th></tr>
+        <tr><th>代码</th><th>名称</th><th>持仓</th><th>成本</th><th>现价</th><th>涨跌幅</th><th>盈亏</th><th>盈亏%</th><th>操作</th></tr>
       </thead>
       <tbody>
         {positions.map((p) => (
@@ -577,6 +578,7 @@ function PositionsTab({ positions, onTrade, onSelectStock }: { positions: Positi
             <td>{p.quantity}</td>
             <td>{p.avg_cost.toFixed(3)}</td>
             <td className="price">{p.current_price.toFixed(3)}</td>
+            <td className={p.change_pct >= 0 ? "profit" : "loss"}>{p.change_pct >= 0 ? "+" : ""}{p.change_pct.toFixed(2)}%</td>
             <td className={p.profit >= 0 ? "profit" : "loss"}>{p.profit >= 0 ? "+" : ""}{p.profit.toFixed(2)}</td>
             <td className={p.profit_pct >= 0 ? "profit" : "loss"}>{p.profit_pct.toFixed(2)}%</td>
             <td><TradeButton code={p.code} name={p.name} price={p.current_price} onDone={onTrade} /></td>
@@ -1213,26 +1215,48 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
   const [maxPrice, setMaxPrice] = useState(5);
   const [topN, setTopN] = useState(30);
   const [excludeSt, setExcludeSt] = useState(true);
+  const [strategy, setStrategy] = useState<"balanced" | "oversold_bounce">("balanced");
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
+
+  const STRATEGY_DESC: Record<string, string> = {
+    balanced: "8因子均衡打分排序",
+    oversold_bounce: "筛选连跌≥2天+放量企稳的小盘超跌股",
+  };
+
+  // 切换策略时自动调整默认参数
+  useEffect(() => {
+    if (strategy === "oversold_bounce") {
+      if (maxPrice <= 5) setMaxPrice(8);
+    }
+  }, [strategy]);
 
   const fetchScreen = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.screenStocks(minPrice, maxPrice, topN, excludeSt) as any;
+      const res = await api.screenStocks(minPrice, maxPrice, topN, excludeSt, strategy) as any;
       if (res.error) { toast(res.error); return; }
       setData(res);
     } catch (e: any) { toast(e?.detail || "选股失败"); }
     finally { setLoading(false); }
-  }, [minPrice, maxPrice, topN, excludeSt]);
+  }, [minPrice, maxPrice, topN, excludeSt, strategy]);
 
   useEffect(() => { fetchScreen(); }, []);
+
+  // 动态top-4因子列（从后端返回）
+  const topFactors = data?.top_factors?.slice(0, 4) || ["动量", "量比", "PE估值", "PB估值"];
 
   return (
     <div className="aiscreen-tab">
       <div className="aiscreen-header">
-        <h2>AI 智能选股</h2>
-        <p className="aiscreen-desc">8因子加权打分排序，基于实时行情数据</p>
+        <h2>AI 智能选股 {data?.strategy_name ? `— ${data.strategy_name}` : ""}</h2>
+        <p className="aiscreen-desc">{STRATEGY_DESC[strategy]}</p>
         <div className="aiscreen-controls">
+          <label>策略
+            <select value={strategy} onChange={e => setStrategy(e.target.value as any)}>
+              <option value="balanced">综合打分</option>
+              <option value="oversold_bounce">超跌反弹（小市值）</option>
+            </select>
+          </label>
           <label>价格区间
             <input type="number" value={minPrice} min={0.1} step={0.5} onChange={e => setMinPrice(Number(e.target.value))} />
             -
@@ -1254,7 +1278,7 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
         <>
           <div className="aiscreen-summary">
             <span>候选池: <b>{data.pool_size}</b> 只</span>
-            <span>因子: {data.factors_used.map(f => factorLabel[f] || f).join(" / ")}</span>
+            <span>因子: {data.factors_used.join(" / ")}</span>
             <span className="disclaimer">{data.disclaimer}</span>
           </div>
 
@@ -1263,7 +1287,9 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
               <thead>
                 <tr>
                   <th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th>
-                  <th>综合得分</th><th>动量</th><th>量比</th><th>PE</th><th>PB</th><th>操作</th>
+                  <th>综合得分</th>
+                  {topFactors.map(f => <th key={f}>{f}</th>)}
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1276,15 +1302,14 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
                       <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["最新价"]?.toFixed(2)}</td>
                       <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["涨跌幅"] > 0 ? "+" : ""}{item["涨跌幅"]?.toFixed(2)}%</td>
                       <td><span className={`score-badge ${item["综合得分"] >= 60 ? "high" : item["综合得分"] >= 40 ? "mid" : "low"}`}>{item["综合得分"]}</span></td>
-                      <td><FactorBar value={(item["因子明细"] || {})["动量"]} /></td>
-                      <td><FactorBar value={(item["因子明细"] || {})["量比"]} /></td>
-                      <td><FactorBar value={(item["因子明细"] || {})["PE估值"]} /></td>
-                      <td><FactorBar value={(item["因子明细"] || {})["PB估值"]} /></td>
+                      {topFactors.map(f => (
+                        <td key={f}><FactorBar value={(item["因子明细"] || {})[f]} /></td>
+                      ))}
                       <td><button className="detail-buy" onClick={e => { e.stopPropagation(); onSelectStock(item["代码"]); }}>查看</button></td>
                     </tr>
                     {expandedCode === item["代码"] && (
                       <tr className="factor-detail-row">
-                        <td colSpan={11}>
+                        <td colSpan={6 + topFactors.length}>
                           <div className="factor-detail">
                             <h4>{item["名称"]}({item["代码"]}) 因子明细</h4>
                             <div className="factor-bars">
@@ -1324,3 +1349,219 @@ const factorLabel: Record<string, string> = {
   pe_score: "PE估值", pb_score: "PB估值", amplitude: "振幅",
   liquidity: "流动性", size_score: "市值",
 };
+
+// ── AutoTradeTab ───────────────────────────────────────────
+
+function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
+  const [config, setConfig] = useState<Record<string, any>>({});
+  const [status, setStatus] = useState<Record<string, any>>({});
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [runningResult, setRunningResult] = useState<any>(null);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [cfg, st, lg] = await Promise.all([
+        api.getAutoTradeConfig(),
+        api.getAutoTradeStatus(),
+        api.getAutoTradeLogs(50),
+      ]);
+      setConfig(cfg);
+      setStatus(st);
+      setLogs(lg);
+    } catch (e: any) { toast(e?.detail || "加载失败"); }
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // 自动刷新日志（当tab激活时）
+  useEffect(() => {
+    if (!config.enabled) return;
+    const iv = setInterval(() => {
+      api.getAutoTradeLogs(30).then(setLogs).catch(() => {});
+      api.getAutoTradeStatus().then(setStatus).catch(() => {});
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [config.enabled]);
+
+  const handleToggle = async () => {
+    const newVal = !config.enabled;
+    try {
+      const c = await api.toggleAutoTrade(newVal);
+      setConfig(c);
+      toast(newVal ? "自动交易已启动" : "自动交易已停止");
+      onTrade();
+    } catch (e: any) { toast(e?.detail || "操作失败"); }
+  };
+
+  const handleSaveConfig = async () => {
+    setLoading(true);
+    try {
+      const c = await api.updateAutoTradeConfig({
+        strategy: config.strategy,
+        max_position_pct: Number(config.max_position_pct),
+        max_daily_buy_pct: Number(config.max_daily_buy_pct),
+        max_positions: Number(config.max_positions),
+        stop_loss_tier1: Number(config.stop_loss_tier1),
+        stop_loss_tier2: Number(config.stop_loss_tier2),
+        take_profit_tier1: Number(config.take_profit_tier1),
+        take_profit_tier2: Number(config.take_profit_tier2),
+        max_drawdown_pct: Number(config.max_drawdown_pct),
+        consecutive_loss_limit: Number(config.consecutive_loss_limit),
+        monitor_interval_sec: Number(config.monitor_interval_sec),
+        screen_top_n: Number(config.screen_top_n),
+        min_price: Number(config.min_price),
+        max_price: Number(config.max_price),
+      });
+      setConfig(c);
+      toast("配置已保存");
+    } catch (e: any) { toast(e?.detail || "保存失败"); }
+    finally { setLoading(false); }
+  };
+
+  const handleRunOpening = async () => {
+    setLoading(true);
+    try {
+      const r = await api.runAutoTradeOpening();
+      setRunningResult(r);
+      toast(`开盘扫描完成: 买入${r.buys}只, 跳过${r.skips}只`);
+      fetchAll(); onTrade();
+    } catch (e: any) { toast(e?.detail || "执行失败"); }
+    finally { setLoading(false); }
+  };
+
+  const handleRunMonitor = async () => {
+    setLoading(true);
+    try {
+      const r = await api.runAutoTradeMonitor();
+      setRunningResult(r);
+      toast(`监控完成: 卖出${r.sells}只`);
+      fetchAll(); onTrade();
+    } catch (e: any) { toast(e?.detail || "执行失败"); }
+    finally { setLoading(false); }
+  };
+
+  const handleResetCircuit = async () => {
+    try {
+      await api.resetCircuitBreaker();
+      toast("熔断已重置");
+      fetchAll();
+    } catch (e: any) { toast(e?.detail || "重置失败"); }
+  };
+
+  const statusCls = config.enabled ? (status.status_text === "已熔断" ? "circuit-broken" : "running") : "stopped";
+  const summary = status.today_summary || {};
+
+  return (
+    <div className="autotrade-tab">
+      {/* Header */}
+      <div className="autotrade-header">
+        <h2>自动交易系统</h2>
+        <div className={`autotrade-toggle ${statusCls}`} onClick={handleToggle}>
+          <span className="toggle-knob" />
+          <span className="toggle-label">{config.enabled ? "运行中" : "已停止"}</span>
+        </div>
+      </div>
+      <p className="autotrade-status">
+        状态: <b className={`status-${statusCls}`}>{status.status_text || "未加载"}</b>
+        &nbsp;|&nbsp; 上次开盘: {config.last_opening_bell_run || "—"}
+        &nbsp;|&nbsp; 调度器: {status.scheduler_running ? "运行中" : "已停止"}
+      </p>
+
+      {/* Today Summary */}
+      {(summary.buys > 0 || summary.sells > 0) && (
+        <div className="autotrade-summary">
+          今日买入: <b>{summary.buys}笔 ¥{summary.buy_amount?.toLocaleString()}</b>
+          &nbsp;|&nbsp; 今日卖出: <b>{summary.sells}笔 ¥{summary.sell_amount?.toLocaleString()}</b>
+          &nbsp;|&nbsp; 连续亏损: <b className={status.consecutive_losses > 0 ? "loss" : ""}>{status.consecutive_losses || 0}次</b>
+          &nbsp;|&nbsp; 峰值资产: <b>¥{(status.peak_total_assets || 0).toLocaleString()}</b>
+        </div>
+      )}
+
+      {/* Strategy & Schedule */}
+      <section className="autotrade-section">
+        <h3>策略与调度</h3>
+        <div className="autotrade-grid-2">
+          <label>策略
+            <select value={config.strategy || "oversold_bounce"} onChange={e => setConfig({ ...config, strategy: e.target.value })}>
+              <option value="oversold_bounce">超跌反弹（小市值）</option>
+              <option value="balanced">综合打分</option>
+            </select>
+          </label>
+          <label>选股数量
+            <input type="number" min={1} max={10} value={config.screen_top_n || 3} onChange={e => setConfig({ ...config, screen_top_n: Number(e.target.value) })} />
+          </label>
+          <label>价格下限
+            <input type="number" step={0.5} min={0.1} value={config.min_price || 1} onChange={e => setConfig({ ...config, min_price: Number(e.target.value) })} /> 元
+          </label>
+          <label>价格上限
+            <input type="number" step={0.5} min={0.5} value={config.max_price || 8} onChange={e => setConfig({ ...config, max_price: Number(e.target.value) })} /> 元
+          </label>
+          <label>监控间隔
+            <input type="number" min={60} max={3600} step={60} value={config.monitor_interval_sec || 300} onChange={e => setConfig({ ...config, monitor_interval_sec: Number(e.target.value) })} /> 秒
+          </label>
+        </div>
+      </section>
+
+      {/* Risk Parameters */}
+      <section className="autotrade-section">
+        <h3>风控参数</h3>
+        <div className="autotrade-grid-risk">
+          <label>单股上限 <input type="number" min={1} max={50} value={config.max_position_pct || 10} onChange={e => setConfig({ ...config, max_position_pct: Number(e.target.value) })} /> %</label>
+          <label>日买上限 <input type="number" min={5} max={100} value={config.max_daily_buy_pct || 30} onChange={e => setConfig({ ...config, max_daily_buy_pct: Number(e.target.value) })} /> %</label>
+          <label>最大持仓 <input type="number" min={1} max={20} value={config.max_positions || 10} onChange={e => setConfig({ ...config, max_positions: Number(e.target.value) })} /> 只</label>
+          <label>止损线1 <input type="number" max={0} value={config.stop_loss_tier1 || -5} onChange={e => setConfig({ ...config, stop_loss_tier1: Number(e.target.value) })} /> % (减半)</label>
+          <label>止损线2 <input type="number" max={0} value={config.stop_loss_tier2 || -10} onChange={e => setConfig({ ...config, stop_loss_tier2: Number(e.target.value) })} /> % (全出)</label>
+          <label>止盈线1 <input type="number" min={0} value={config.take_profit_tier1 || 10} onChange={e => setConfig({ ...config, take_profit_tier1: Number(e.target.value) })} /> % (减半)</label>
+          <label>止盈线2 <input type="number" min={0} value={config.take_profit_tier2 || 20} onChange={e => setConfig({ ...config, take_profit_tier2: Number(e.target.value) })} /> % (全出)</label>
+          <label>回撤熔断 <input type="number" min={5} max={50} value={config.max_drawdown_pct || 15} onChange={e => setConfig({ ...config, max_drawdown_pct: Number(e.target.value) })} /> %</label>
+          <label>连亏熔断 <input type="number" min={1} max={10} value={config.consecutive_loss_limit || 3} onChange={e => setConfig({ ...config, consecutive_loss_limit: Number(e.target.value) })} /> 次</label>
+        </div>
+        <button className="detail-buy" onClick={handleSaveConfig} disabled={loading}>{loading ? "保存中..." : "保存配置"}</button>
+      </section>
+
+      {/* Manual Controls */}
+      <section className="autotrade-section">
+        <h3>手动控制</h3>
+        <div className="autotrade-buttons">
+          <button className="detail-buy" onClick={handleRunOpening} disabled={loading}>执行开盘扫描</button>
+          <button className="detail-buy" onClick={handleRunMonitor} disabled={loading}>执行盘中监控</button>
+          <button className="detail-sell" onClick={handleResetCircuit}>重置熔断状态</button>
+        </div>
+        {runningResult && (
+          <div className="autotrade-result">
+            结果: 买入{runningResult.buys}只 | 跳过{runningResult.skips}只 | 错误{runningResult.errors}只
+            {runningResult.reason && <span> | {runningResult.reason}</span>}
+          </div>
+        )}
+      </section>
+
+      {/* Trade Log */}
+      <section className="autotrade-section">
+        <h3>交易日志 ({logs.length})</h3>
+        <div className="table-wrap">
+          <table className="stock-table autotrade-log-table">
+            <thead><tr>
+              <th>时间</th><th>类型</th><th>操作</th><th>股票</th><th>数量</th><th>价格</th><th>金额</th><th>原因</th>
+            </tr></thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id} className={log.success === 0 ? "error-row" : ""}>
+                  <td>{new Date(log.created_at * 1000).toLocaleTimeString("zh-CN")}</td>
+                  <td><span className={`log-type ${log.run_type}`}>{log.run_type === "opening_bell" ? "开盘" : log.run_type === "intraday_monitor" ? "监控" : "手动"}</span></td>
+                  <td><span className={`log-action ${log.action}`}>{log.action === "buy" ? "买入" : log.action === "sell" ? "卖出" : log.action === "skip" ? "跳过" : log.action === "circuit_break" ? "熔断" : log.action}</span></td>
+                  <td>{log.code ? `${log.code} ${log.name}` : "—"}</td>
+                  <td>{log.quantity > 0 ? log.quantity : "—"}</td>
+                  <td>{log.price > 0 ? log.price.toFixed(2) : "—"}</td>
+                  <td>{log.amount > 0 ? `¥${log.amount.toLocaleString()}` : "—"}</td>
+                  <td className="log-reason">{log.reason || "—"}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && <tr><td colSpan={8} className="empty">暂无日志</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}

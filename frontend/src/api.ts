@@ -194,6 +194,7 @@ export interface Position {
   market_value: number;
   profit: number;
   profit_pct: number;
+  change_pct: number;
 }
 
 export interface Transaction {
@@ -382,6 +383,8 @@ export interface AIScreenResult {
   factors_used: string[];
   weights: Record<string, number>;
   results: AIScreenItem[];
+  strategy_name?: string;
+  top_factors?: string[];
   disclaimer: string;
   error?: string;
 }
@@ -392,16 +395,7 @@ export interface AIScreenItem {
   "最新价": number;
   "涨跌幅": number;
   "综合得分": number;
-  "因子明细": {
-    "动量": number;
-    "量比": number;
-    "换手": number;
-    "PE估值": number;
-    "PB估值": number;
-    "振幅": number;
-    "流动性": number;
-    "市值": number;
-  };
+  "因子明细": Record<string, number>;
 }
 
 export const api = {
@@ -582,8 +576,40 @@ export const api = {
     request<AIAnalysis>(`/ai/analyze/${code}`),
   getAIScore: (code: string) =>
     request<AIScore>(`/ai/score/${code}`),
-  screenStocks: (minPrice = 1, maxPrice = 5, topN = 30, excludeSt = true) => {
+  screenStocks: (minPrice = 1, maxPrice = 5, topN = 30, excludeSt = true, strategy = "balanced") => {
     invalidateCache("/ai/screen");
-    return request<AIScreenResult>(`/ai/screen?min_price=${minPrice}&max_price=${maxPrice}&top_n=${topN}&exclude_st=${excludeSt}`);
+    return request<AIScreenResult>(`/ai/screen?min_price=${minPrice}&max_price=${maxPrice}&top_n=${topN}&exclude_st=${excludeSt}&strategy=${strategy}`);
+  },
+
+  // ─── 自动交易 ───
+  getAutoTradeConfig: () => request<Record<string, any>>("/auto-trade/config"),
+  updateAutoTradeConfig: (cfg: Partial<Record<string, any>>) => {
+    invalidateCache("/auto-trade");
+    return request<Record<string, any>>("/auto-trade/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+  },
+  toggleAutoTrade: (enabled: boolean) => {
+    invalidateCache("/auto-trade");
+    return request<Record<string, any>>("/auto-trade/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  },
+  runAutoTradeOpening: () => request<any>("/auto-trade/run-opening", { method: "POST" }),
+  runAutoTradeMonitor: () => request<any>("/auto-trade/run-monitor", { method: "POST" }),
+  resetCircuitBreaker: () => {
+    invalidateCache("/auto-trade");
+    return request<{ message: string }>("/auto-trade/reset-circuit", { method: "POST" });
+  },
+  getAutoTradeStatus: () => request<Record<string, any>>("/auto-trade/status"),
+  getAutoTradeLogs: (limit = 50, run_type = "", action = "") => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (run_type) qs.set("run_type", run_type);
+    if (action) qs.set("action", action);
+    return request<any[]>(`/auto-trade/logs?${qs}`);
   },
 };

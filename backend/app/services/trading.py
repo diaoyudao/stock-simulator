@@ -6,6 +6,20 @@ from pathlib import Path
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "stock_sim.db"
 INITIAL_CASH = 100000.0
 
+# ─── A股交易手续费 ───
+COMMISSION_RATE = 0.00025      # 佣金万2.5
+COMMISSION_MIN = 5.0           # 佣金最低5元
+STAMP_TAX_RATE = 0.001         # 印花税千1（仅卖出）
+TRANSFER_FEE_RATE = 0.00001    # 过户费十万1（买卖双向）
+
+
+def _calc_fees(amount: float, is_sell: bool = False) -> tuple[float, float, float, float]:
+    """计算交易手续费。返回 (佣金, 印花税, 过户费, 总费用)。"""
+    commission = max(amount * COMMISSION_RATE, COMMISSION_MIN)
+    stamp_tax = amount * STAMP_TAX_RATE if is_sell else 0.0
+    transfer_fee = amount * TRANSFER_FEE_RATE
+    return commission, stamp_tax, transfer_fee, commission + stamp_tax + transfer_fee
+
 # 全局共享连接，避免每次请求都新建连接和建表
 _db: aiosqlite.Connection | None = None
 _tables_ready = False
@@ -195,15 +209,17 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
     if quantity <= 0 or quantity % 100 != 0:
         return {"error": "买入数量必须为100的整数倍"}
     amount = quantity * price
+    _, _, _, total_fee = _calc_fees(amount)
+    total_cost = amount + total_fee
 
     async with _trade_lock:
         db = await _get_db()
         cur = await db.execute("SELECT cash FROM account WHERE id = 1")
         row = await cur.fetchone()
-        if row["cash"] < amount:
-            return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
+        if row["cash"] < total_cost:
+            return {"error": f"余额不足，需要 {total_cost:.2f}（含手续费 {total_fee:.2f}），可用 {row['cash']:.2f}"}
 
-        await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
+        await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (total_cost,))
 
         cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
         pos = await cur.fetchone()
@@ -226,7 +242,7 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
         )
         await db.commit()
 
-    return {"success": True, "action": "buy", "code": code, "quantity": quantity, "price": price, "amount": amount}
+    return {"success": True, "action": "buy", "code": code, "quantity": quantity, "price": price, "amount": amount, "fee": total_fee}
 
 
 async def sell_stock(code: str, quantity: int, price: float) -> dict:
@@ -234,6 +250,8 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
     if quantity <= 0 or quantity % 100 != 0:
         return {"error": "卖出数量必须为100的整数倍"}
     amount = quantity * price
+    _, _, _, total_fee = _calc_fees(amount, is_sell=True)
+    net_proceeds = amount - total_fee
 
     async with _trade_lock:
         db = await _get_db()
@@ -243,7 +261,7 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
             available = pos["quantity"] if pos else 0
             return {"error": f"持仓不足，可用 {available} 股"}
 
-        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (net_proceeds,))
 
         new_qty = pos["quantity"] - quantity
         if new_qty == 0:
@@ -258,7 +276,7 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
         )
         await db.commit()
 
-    return {"success": True, "action": "sell", "code": code, "quantity": quantity, "price": price, "amount": amount, "profit": profit}
+    return {"success": True, "action": "sell", "code": code, "quantity": quantity, "price": price, "amount": amount, "fee": total_fee, "profit": profit}
 
 
 async def reset_account() -> dict:
@@ -312,11 +330,13 @@ async def create_order(code: str, name: str, action: str, quantity: int, target_
         db = await _get_db()
         if action == "buy":
             amount = quantity * target_price
+            _, _, _, total_fee = _calc_fees(amount)
+            frozen = amount + total_fee
             cur = await db.execute("SELECT cash FROM account WHERE id = 1")
             row = await cur.fetchone()
-            if row["cash"] < amount:
-                return {"error": f"余额不足，需要 {amount:.2f}，可用 {row['cash']:.2f}"}
-            await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (amount,))
+            if row["cash"] < frozen:
+                return {"error": f"余额不足，需要 {frozen:.2f}（含手续费 {total_fee:.2f}），可用 {row['cash']:.2f}"}
+            await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (frozen,))
         else:
             # 卖出委托：冻结持仓，防止同时直接卖出
             cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
@@ -361,7 +381,8 @@ async def cancel_order(order_id: int) -> dict:
 
         if order["action"] == "buy":
             amount = order["quantity"] * order["target_price"]
-            await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+            _, _, _, total_fee = _calc_fees(amount)
+            await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount + total_fee,))
         else:
             # 卖出委托取消：归还冻结的持仓（使用冻结时记录的原始成本价）
             original_avg_cost = order["avg_cost"] or order["target_price"]
@@ -424,8 +445,14 @@ async def _fill_order(db: aiosqlite.Connection, order: aiosqlite.Row, fill_price
 
     if order["action"] == "buy":
         frozen = order["quantity"] * order["target_price"]
+        _, _, _, frozen_fee = _calc_fees(frozen)
+        frozen_total = frozen + frozen_fee
+
         actual = order["quantity"] * fill_price
-        refund = frozen - actual
+        _, _, _, actual_fee = _calc_fees(actual)
+        actual_total = actual + actual_fee
+
+        refund = frozen_total - actual_total
         if refund > 0:
             await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (refund,))
 
@@ -442,7 +469,9 @@ async def _fill_order(db: aiosqlite.Connection, order: aiosqlite.Row, fill_price
 
     else:  # sell — 持仓已在 create_order 时冻结，只需加钱
         amount = order["quantity"] * fill_price
-        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (amount,))
+        _, _, _, total_fee = _calc_fees(amount, is_sell=True)
+        net_proceeds = amount - total_fee
+        await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (net_proceeds,))
 
     amount = order["quantity"] * fill_price
     await db.execute(

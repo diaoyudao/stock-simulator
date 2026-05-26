@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-19T13:43:23.361Z
-> Files: 538 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T01:35:43.032Z
+> Files: 557 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -10,13 +10,14 @@
 - `CLAUDE.md` — CLAUDE.md (~1562 tok)
 - `DEPLOY.md` — 部署指南 (~399 tok)
 - `DESIGN.md` — StockSimulator Design System (~1091 tok)
+- `docs/metrics-dashboard.md` — 产品指标看板规范（North Star + Input/Health/Performance 4层体系）(~1710 tok)
 - `dev.sh` — StockSimulator 开发服务器启动/停止脚本 (~764 tok)
 - `docker-compose.yml` — Docker Compose services (~40 tok)
 - `Effective harnesses for long-running agents（长周期智能体的有效调度框架）.md` — Effective harnesses for long-running agents（长周期智能体的有效调度框架） (~869 tok)
 - `init.sh` — StockSimulator 环境启动脚本 (~341 tok)
 - `PRODUCT.md` — StockSimulator (~405 tok)
-- `README.en.md` — StockSimulator (~249 tok)
-- `README.md` — Project documentation (~388 tok)
+- `README.en.md` — A-Stock Low-Price Simulator (~724 tok)
+- `README.md` — Project documentation (~542 tok)
 - `start.bat` (~197 tok)
 - `stop.bat` (~158 tok)
 - `task_tree.json` (~6016 tok)
@@ -30,19 +31,42 @@
 
 - `openwolf.md` (~313 tok)
 
+## C:/Users/gaine/.claude/
+
+- `settings.json` (~589 tok)
+
 ## C:/Users/gaine/.claude/plans/
 
-- `curried-jumping-wadler.md` — 板块数据补全：东财概念全量 + 申万行业分级 (~626 tok)
+- `curried-jumping-wadler-agent-a3226d73dd999130b.md` — A股实时行情数据源替代方案调研报告 (~1391 tok)
+- `curried-jumping-wadler.md` — 自动交易系统 — 策略驱动闭环 (~1709 tok)
+
+## C:/Users/gaine/.claude/projects/e--project-StockSimulator/memory/
+
+- `MEMORY.md` (~46 tok)
+- `project_ai_screen.md` — AI智能选股 (2026-05-21实现) (~156 tok)
+
+## C:/Users/gaine/.claude/skills/novel-editor-cn/
+
+- `SKILL.md` — 小说主编审阅 (~3233 tok)
+
+## C:/Users/gaine/.claude/skills/novel-writer-cn/
+
+- `SKILL.md` — 小说写作助手 (~1845 tok)
 
 ## C:/Users/gaine/.claude/skills/spec-driven-workflow/
 
-- `SKILL.md` — Spec-Driven Workflow (~837 tok)
+- `SKILL.md` — Spec-Driven Workflow (~1019 tok)
+
+## C:/Users/gaine/.claude/skills/writing-shared-cn/references/
+
+- `ai-trace-detection.md` — AI痕迹诊断与降AI策略 (~447 tok)
+- `emotion-rules.md` — 情感真实性规则 (~319 tok)
 
 ## backend/
 
 - `.dockerignore` — Docker ignore rules (~10 tok)
 - `Dockerfile` — Docker container definition (~61 tok)
-- `main.py` — API: GET (1 endpoints) (~299 tok)
+- `main.py` — API: 1 endpoints (~394 tok)
 - `requirements.txt` — Python dependencies (~34 tok)
 - `run.py` — 启动脚本 — 加载 .env 后运行 uvicorn。 (~151 tok)
 
@@ -745,23 +769,40 @@
 
 ## backend/app/routers/
 
+- `ai.py` — API: 3 endpoints (~524 tok)
+- `auto_trade.py` — 自动交易 API 路由 — 配置/开关/手动触发/状态/日志。 (~680 tok)
 - `market.py` — API: 17 endpoints (~1589 tok)
+- `trade.py` — API: 20 endpoints (~3716 tok)
 
 ## backend/app/services/
 
-- `astock_data.py` — get_prefix, get_tdx_client, tdx_bars, tdx_quotes (~8164 tok)
-- `market_data.py` — BoundedCache: cleanup, get_spot_data (~27706 tok)
+- `ai_analysis.py` — AI股票分析服务 — 智谱GLM API集成 + 规则评分引擎 + 多因子选股 (~5985 tok)
+- `astock_data.py` — get_prefix, get_tdx_client, tdx_bars, tdx_quotes, _tencent_quote_sync(500/批,绕代理) (~8700 tok)
+- `auto_trader.py` — 自动交易系统 — 策略驱动闭环：AI选股买入 + 止损止盈卖出 + 完整风控。 (~5130 tok)
+- `market_data.py` — BoundedCache: cleanup (~30222 tok)
+- `trading.py` — get_account, get_positions, get_transactions, buy_stock (~8115 tok)
+
+## docs/
+
+- `metrics-dashboard.md` — StockSimulator 产品指标看板 (~1603 tok)
 
 ## frontend/
 
+- `browser-test-autotrade.mjs` — BASE: ok, fail, safeText, test (~1203 tok)
+- `browser-test.mjs` — BASE: ok, fail, safeText, test (~1401 tok)
 - `index.html` — A股低价股模拟炒股 (~176 tok)
 - `vite.config.ts` (~74 tok)
 
 ## frontend/src/
 
-- `App.css` — Styles: 86 rules (~13116 tok)
-- `App.tsx` — 可搜索下拉组件 (~15789 tok)
+- `api.ts` — Exports SpotResult, StockItem, StockDetail, EtfItem + 30 more (~5051 tok)
+- `App.css` — Styles: 86 rules (~15229 tok)
+- `App.tsx` — 可搜索下拉组件 (~20818 tok)
 - `index.css` — Styles: 6 rules, 40 vars (~705 tok)
+
+## research_ai_stock/
+
+- `research_ai_stock.md` — AI选股 / 智能筛选 开源项目调研报告 (~1658 tok)
 
 ## research_astock_data/
 

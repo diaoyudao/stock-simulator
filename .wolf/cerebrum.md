@@ -2,7 +2,7 @@
 
 > OpenWolf's learning memory. Updated automatically as the AI learns from interactions.
 > Do not edit manually unless correcting an error.
-> Last updated: 2026-05-13
+> Last updated: 2026-05-21
 
 ## User Preferences
 
@@ -11,12 +11,18 @@
 ## Key Learnings
 
 - **Project:** StockSimulator
-- **Description:** 筛选5元以下A股，展示新浪财经实时行情，10万虚拟资金模拟交易。
+- **Description:** 筛选5元以下A股，展示实时行情，10万虚拟资金模拟交易。
+- **行情数据源回退链（2026-05-20稳定化）**：腾讯批量(qt.gtimg.cn)→mootdx TCP→新浪分页→东财push2(可能被封)→旧缓存。主源腾讯含完整PE/PB/量比/换手率。代码列表优先从缓存行情/mootdx stocks()/新浪分页获取。新浪API每页限100条且可能限流，mootdx stocks()可1-2秒获取6800+A股代码。
 - **数据源架构（2026-05-19重构）**：astock_data.py（基于a-stock-data项目）作为主数据源层，mootdx(TCP)用于K线/盘口/分时/财务，腾讯HTTP用于PE/PB/量比，百度HTTP用于资金流向，东财HTTP用于资讯/龙虎榜/排行，新浪HTTP用于财报三表。AKShare降级为fallback。
+- **push2.eastmoney.com被Clash封锁**：Clash Verge fake-ip DNS污染(198.18.1.47)，不走代理SSL握手也失败。所有push2相关接口(行情/排行/板块)不可用。不改Clash配置，纯代码回退。
+- **腾讯行情批量500/批**：batch_size=500比80快4倍(0.3s vs 1.4s/500只)，全量5500只约3-4秒。
+- **mootdx字段名用中文数字**：盘口字段"买一""买量一"不是"买1""买量1"，循环构建key需用cn_nums映射。
+- **新浪getHQNodeData限制**：不论num参数多大，每页最多返回100条。需分页获取。返回字段含PE/PB/换手率/市值（比预期全）。
 - **资金流向数据源（2026-05-19修复）**：push2his.eastmoney.com 被Clash fake-ip DNS污染(198.18.1.47)且SSL握手失败，fundflow2.eastmoney.com 返回HTML非JSON。唯一可用源：datacenter-web.eastmoney.com RPT_DMSK_TS_STOCKNEW（仅当天数据）。使用文件缓存(`backend/data/fund_flow/{code}.json`)积累历史数据。ETF无datacenter数据。
 - **板块数据源（2026-05-19统一改为申万行业）**：板块模块统一用申万行业分类，不再用概念板块。`get_sector_list()` 和 `get_sector_overview()` 都返回申万行业数据（31一级+129二级，硬编码代码映射）。`ak.sw_index_first/second_info()` 不可用（legulegu.com 504），成分股查询用 `ak.index_component_sw(code)` 仍可用。`/api/market/sectors` 和 `/api/market/sector-overview` 接口路径不变，`/api/market/industries` 也返回申万行业。
 - **mootdx是同步库**：所有调用需 `run_in_executor` 包装。FastAPI中需注意 `asyncio.get_event_loop().is_running()` 判断，运行中用 ThreadPoolExecutor。
 - **东财JSONP接口**：`eastmoney_stock_news` 的 `cmsArticleWebOld` 返回值可能是 list 或 dict，需兼容两种格式。
+- **get_spot_data()返回list[dict]非DataFrame**（2026-05-21）：`market_data.py:get_spot_data()` 返回类型是 `list[dict]`（每项含"代码"/"最新价"等中文key），不是 pandas DataFrame。在 auto_trader.py 等调用方必须用 `isinstance(data, list)` 检查 + dict comprehension 取值，不能用 `.empty` / `.columns` 等 DataFrame API。此错误导致盘中监控永远无法卖出股票。
 
 ## Do-Not-Repeat
 
@@ -26,6 +32,7 @@
 - **[2026-05-19] push2his.eastmoney.com不可用**：Clash Verge fake-ip模式导致DNS污染（解析到198.18.1.47），走DIRECT不通，走代理SSL握手也失败。fundflow2.eastmoney.com返回HTML非JSON（服务端拒绝）。资金流向必须用datacenter-web.eastmoney.com的RPT_DMSK_TS_STOCKNEW（仅当天）+ 本地文件历史缓存。
 - **[2026-05-19] 申万行业代码格式**：`ak.sw_index_second_info()` 已不可用（legulegu.com 504），改用硬编码 `_SW_L1_INDUSTRIES` / `_SW_L2_INDUSTRIES` 映射。成分股查询用 `ak.index_component_sw(code)` 只接受纯数字如 "801102"。
 - **[2026-05-19] 板块统一用申万行业**：概念板块（光通信模块等）不再支持筛选。成分股查询只用 `ak.index_component_sw()`，通过硬编码映射查行业代码。
+- **[2026-05-21] get_spot_data()返回list[dict]**：绝对不能当 DataFrame 用（`.empty`/`.columns`/`.iterrows()` 全错）。正确模式：`isinstance(data, list) and data` → `{s.get("代码"): s.get("最新价") for s in data}`。此错误导致自动交易"只买不卖"——盘中监控价格映射永远为空，pnl%永远为0，止损止盈信号永不触发。
 
 ## Decision Log
 

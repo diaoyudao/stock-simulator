@@ -533,6 +533,479 @@
       "related_bugs": [],
       "occurrences": 1,
       "last_seen": "2026-05-19T13:43:23.371Z"
+    },
+    {
+      "id": "bug-034",
+      "timestamp": "2026-05-20T01:16:03.841Z",
+      "error_message": "Wrong reference: review should be coverage",
+      "file": "C:/Users/gaine/.claude/skills/spec-driven-workflow/SKILL.md",
+      "root_cause": "Used \"review\" instead of \"coverage\"",
+      "fix": "Changed review → coverage",
+      "tags": [
+        "auto-detected",
+        "wrong-reference",
+        "md"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T01:16:03.841Z"
+    },
+    {
+      "id": "bug-035",
+      "timestamp": "2026-05-20T01:41:45.487Z",
+      "error_message": "Significant refactor of ",
+      "file": "backend/app/services/astock_data.py",
+      "root_cause": "31 lines replaced/restructured",
+      "fix": "Rewrote 51→77 lines (31 removed)",
+      "tags": [
+        "auto-detected",
+        "refactor",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T01:41:45.487Z"
+    },
+    {
+      "id": "bug-036",
+      "timestamp": "2026-05-20T01:42:00.131Z",
+      "error_message": "Incorrect value in code",
+      "file": "backend/app/services/astock_data.py",
+      "root_cause": "Had \"腾讯财经批量实时行情（异步）\"",
+      "fix": "Changed to \"腾讯财经批量实时行情（异步），返回 list[dict]\"",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T01:42:00.131Z"
+    },
+    {
+      "id": "bug-037",
+      "timestamp": "2026-05-20T01:42:58.235Z",
+      "error_message": "Significant refactor of ",
+      "file": "backend/app/services/market_data.py",
+      "root_cause": "15 lines replaced/restructured",
+      "fix": "Rewrote 28→181 lines (15 removed) | Also: client = astock_data._get_tdx_client_sync(); # mootdx 不支持一次拉全市场，分批获取沪深主板 | Also: # 新浪直接优先; # AKShare备用 | Also: \"\"\"一次获取全市场A股代码列表，供腾讯批量查询用。5分钟缓存。\"\"\"; page = 1 | Also: \"\"\"新浪 getHQNodeData 一次全量获取，字段少，标记降级。\"\"\"; url = (\"https://vip.stock.finance.sina.com.cn/quot | Also: def _fetch_sina_code_list() -> list[str]:; \"\"\"获取全市场A股代码列表。优先从缓存行情数据提取，降级到新浪分页。5分钟缓存。\"\"\" | Also: \"\"\"mootdx TCP 获取全市场行情（同步），缺PE/PB/量比，标记降级。\"\"\"; codes = _fetch_code_list() | Also: # A股: 沪市6/9开头, 深市0/3开头, 北证8开头; if c[:1] in (\"6\", \"9\", \"0\", \"3\", \"8\"): | Also: import concurrent.futures; with concurrent.futures.ThreadPoolExecutor() as po",
+      "tags": [
+        "auto-detected",
+        "refactor",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 9,
+      "last_seen": "2026-05-20T01:56:15.903Z"
+    },
+    {
+      "id": "bug-038",
+      "timestamp": "2026-05-20T01:51:59.072Z",
+      "error_message": "Wrong reference: _fetch_sina_code_list should be _fetch_code_list",
+      "file": "backend/app/services/market_data.py",
+      "root_cause": "Used \"_fetch_sina_code_list\" instead of \"_fetch_code_list\"",
+      "fix": "Changed _fetch_sina_code_list → _fetch_code_list",
+      "tags": [
+        "auto-detected",
+        "wrong-reference",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T01:51:59.072Z"
+    },
+    {
+      "id": "bug-039",
+      "timestamp": "2026-05-20T02:30:00",
+      "error_message": "盘口接口bidask返回全0，mootdx字段名映射错误",
+      "file": "backend/app/services/market_data.py",
+      "root_cause": "get_bid_ask()中用f\"买{i}\"(阿拉伯数字1-5)但mootdx字段名是\"买一\"\"买二\"(中文数字)；另外用asyncio.run()在FastAPI同步路由中报错",
+      "fix": "1. 改用cn_nums映射(一二三四五)；2. 将asyncio.run(tdx_quotes)改为直接调用_tdx_quotes_sync()",
+      "tags": [
+        "bidask",
+        "mootdx",
+        "field-name",
+        "sync-async"
+      ],
+      "related_bugs": [
+        "bug-005"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T02:30:00"
+    },
+    {
+      "id": "bug-040",
+      "timestamp": "2026-05-20T02:45:58.090Z",
+      "error_message": "Wrong reference: 120000 should be 160000",
+      "file": "C:/Users/gaine/.claude/settings.json",
+      "root_cause": "Used \"120000\" instead of \"160000\"",
+      "fix": "Changed 120000 → 160000",
+      "tags": [
+        "auto-detected",
+        "wrong-reference",
+        "json"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T02:45:58.090Z"
+    },
+    {
+      "id": "bug-041",
+      "timestamp": "2026-05-20T11:00:00+08:00",
+      "error_message": "委托买入报错 - POST /api/trade/order 返回 500 Internal Server Error",
+      "file": "backend/app/services/trading.py",
+      "root_cause": "pending_orders表缺少avg_cost列。_ensure_tables用CREATE TABLE IF NOT EXISTS不会给已存在的表添加新列。代码中create_order尝试INSERT含avg_cost字段但表中无此列，导致sqlite3.OperationalError",
+      "fix": "在_ensure_tables末尾添加ALTER TABLE迁移：ALTER TABLE pending_orders ADD COLUMN avg_cost REAL NOT NULL DEFAULT 0.0（try/except包裹，已存在则跳过）",
+      "tags": [
+        "sqlite",
+        "migration",
+        "trading",
+        "500-error"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T11:00:00+08:00"
+    },
+    {
+      "id": "bug-042",
+      "timestamp": "2026-05-20T03:17:45.203Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/vite.config.ts",
+      "root_cause": "Had 'http://127.0.0.1:8002'",
+      "fix": "Changed to 'http://127.0.0.1:8000'",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-20T03:17:45.203Z"
+    },
+    {
+      "id": "bug-043",
+      "timestamp": "2026-05-21T00:34:36.879Z",
+      "error_message": "Missing await",
+      "file": "backend/app/services/ai_analysis.py",
+      "root_cause": "Async call without await — returned Promise instead of value",
+      "fix": "Added await to async call",
+      "tags": [
+        "auto-detected",
+        "async-fix",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:34:36.879Z"
+    },
+    {
+      "id": "bug-044",
+      "timestamp": "2026-05-21T00:41:17.919Z",
+      "error_message": "Missing error handling in AiScreenTab",
+      "file": "frontend/src/App.tsx",
+      "root_cause": "Code path had no error handling — exceptions would propagate uncaught",
+      "fix": "Added try/catch block",
+      "tags": [
+        "auto-detected",
+        "error-handling",
+        "tsx"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:41:17.919Z"
+    },
+    {
+      "id": "bug-045",
+      "timestamp": "2026-05-21T00:41:41.347Z",
+      "error_message": "CSS fix: grid-template-columns, gap",
+      "file": "frontend/src/App.css",
+      "root_cause": "grid-template-columns: 30px 1fr auto auto → 50px 1fr 30px; gap: 4px → 8px",
+      "fix": "Changed grid-template-columns: 30px 1fr auto auto → 50px 1fr 30px; gap: 4px → 8px",
+      "tags": [
+        "auto-detected",
+        "style-fix",
+        "css"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:41:41.347Z"
+    },
+    {
+      "id": "bug-046",
+      "timestamp": "2026-05-21T00:42:47.566Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/vite.config.ts",
+      "root_cause": "Had 'http://127.0.0.1:8000'",
+      "fix": "Changed to 'http://127.0.0.1:8001'",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 2,
+      "last_seen": "2026-05-21T00:43:17.166Z"
+    },
+    {
+      "id": "bug-047",
+      "timestamp": "2026-05-21T01:08:18.322Z",
+      "error_message": "CSS fix: width",
+      "file": "frontend/src/App.tsx",
+      "root_cause": "width: `${v → `${Math.max(0, Number(v))",
+      "fix": "Changed width: `${v → `${Math.max(0, Number(v))",
+      "tags": [
+        "auto-detected",
+        "style-fix",
+        "tsx"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T01:08:18.322Z"
+    },
+    {
+      "id": "bug-048",
+      "timestamp": "2026-05-21T09:30:00+08:00",
+      "error_message": "ReferenceError: React is not defined at App.tsx:1270 — AI精选页面崩溃",
+      "file": "frontend/src/App.tsx",
+      "root_cause": "AiScreenTab组件使用React.Fragment但文件顶部只解构导入了hooks（useState等），未导入React本身。App.tsx第1行: import { useState, useEffect, useCallback, useRef } from 'react' — 无React命名空间",
+      "fix": "将<React.Fragment key={...}>替换为<>...</>（JSX fragment语法糖），同时给所有item['因子明细']访问添加|| {}空值兜底，factor-bar width加Math.max(0, Number(v))防NaN",
+      "tags": [
+        "react-import",
+        "fragment",
+        "ai-screen",
+        "null-safety"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T09:30:00+08:00"
+    },
+    {
+      "id": "bug-049",
+      "timestamp": "2026-05-21T01:47:23.984Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/src/App.tsx",
+      "root_cause": "Had \"expanded\"",
+      "fix": "Changed to \"代码\"",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "tsx"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T01:47:23.984Z"
+    },
+    {
+      "id": "bug-050",
+      "timestamp": "2026-05-21T02:31:45.648Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/vite.config.ts",
+      "root_cause": "Had 'http://127.0.0.1:8000'",
+      "fix": "Changed to 'http://127.0.0.1:8002'",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T02:31:45.648Z"
+    },
+    {
+      "id": "bug-051",
+      "timestamp": "2026-05-21T04:04:04.956Z",
+      "error_message": "Wrong return value",
+      "file": "frontend/src/api.ts",
+      "root_cause": "Was returning: request<AIScreenResult>(`/ai/screen?min_price=${mi",
+      "fix": "Now returns: request<AIScreenResult>(`/ai/screen?min_price=${mi",
+      "tags": [
+        "auto-detected",
+        "return-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T04:04:04.956Z"
+    },
+    {
+      "id": "bug-052",
+      "timestamp": "2026-05-21T04:12:02.182Z",
+      "error_message": "Significant refactor of ",
+      "file": "backend/app/services/ai_analysis.py",
+      "root_cause": "2 lines replaced/restructured",
+      "fix": "Rewrote 13→21 lines (2 removed) | Also: cd = s.get(\"连跌天数\", 0) or 0; min_cd = strat_filters.get(\"min_consecutive_down\",",
+      "tags": [
+        "auto-detected",
+        "refactor",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 2,
+      "last_seen": "2026-05-21T04:12:16.226Z"
+    },
+    {
+      "id": "bug-053",
+      "timestamp": "2026-05-21T04:15:51.618Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/vite.config.ts",
+      "root_cause": "Had 'http://127.0.0.1:8002'",
+      "fix": "Changed to 'http://127.0.0.1:8003'",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T04:15:51.618Z"
+    },
+    {
+      "id": "bug-054",
+      "timestamp": "2026-05-21T06:12:06.317Z",
+      "error_message": "Missing error handling in AutoTradeTab",
+      "file": "frontend/src/App.tsx",
+      "root_cause": "Code path had no error handling — exceptions would propagate uncaught",
+      "fix": "Added try/catch block",
+      "tags": [
+        "auto-detected",
+        "error-handling",
+        "tsx"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T06:12:06.317Z"
+    },
+    {
+      "id": "bug-055",
+      "timestamp": "2026-05-21T06:13:04.319Z",
+      "error_message": "CSS fix: font-weight, font-size",
+      "file": "frontend/src/App.css",
+      "root_cause": "font-weight: bold → 600; font-size: 12px → 11px",
+      "fix": "Changed font-weight: bold → 600; font-size: 12px → 11px",
+      "tags": [
+        "auto-detected",
+        "style-fix",
+        "css"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T06:13:04.319Z"
+    },
+    {
+      "id": "bug-056",
+      "timestamp": "2026-05-21T06:24:36.686Z",
+      "error_message": "Significant refactor of ",
+      "file": "backend/app/services/auto_trader.py",
+      "root_cause": "6 lines replaced/restructured",
+      "fix": "Rewrote 11→8 lines (6 removed)",
+      "tags": [
+        "auto-detected",
+        "refactor",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T06:24:36.686Z"
+    },
+    {
+      "id": "bug-057",
+      "timestamp": "2026-05-21T07:00:00+08:00",
+      "error_message": "_build_price_map()返回空dict导致盘中监控永远无法卖出股票",
+      "file": "backend/app/services/auto_trader.py",
+      "root_cause": "_build_price_map()将get_spot_data()的返回值当作pandas DataFrame处理（用df.empty检查），但实际返回类型是list[dict]。AttributeError: 'list' object has no attribute 'empty'被静默捕获，返回空价格映射{}，导致所有持仓的current_price=0，pnl%=0，永远不触发止损止盈信号",
+      "fix": "将DataFrame操作替换为list[dict]处理：isinstance(data, list) and data → dict comprehension从s.get('代码')/s.get('最新价')构建映射",
+      "tags": [
+        "auto-trader",
+        "price-map",
+        "dataframe",
+        "list-dict",
+        "sell-bug",
+        "critical"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-21T07:00:00+08:00"
+    },
+    {
+      "id": "bug-058",
+      "timestamp": "2026-05-22T00:44:55.194Z",
+      "error_message": "Incorrect value in code",
+      "file": "frontend/vite.config.ts",
+      "root_cause": "Had 'http://127.0.0.1:8003'",
+      "fix": "Changed to 'http://127.0.0.1:8000'",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "ts"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-22T00:44:55.194Z"
+    },
+    {
+      "id": "bug-059",
+      "timestamp": "2026-05-22T00:54:38.817Z",
+      "error_message": "Function not marked async",
+      "file": "backend/app/routers/trade.py",
+      "root_cause": "Function uses await but wasn't declared async",
+      "fix": "Added async modifier",
+      "tags": [
+        "auto-detected",
+        "async-fix",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-22T00:54:38.817Z"
+    },
+    {
+      "id": "bug-060",
+      "timestamp": "2026-05-22T00:55:08.091Z",
+      "error_message": "Significant refactor of ",
+      "file": "backend/app/routers/trade.py",
+      "root_cause": "3 lines replaced/restructured",
+      "fix": "Rewrote 9→4 lines (3 removed)",
+      "tags": [
+        "auto-detected",
+        "refactor",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-22T00:55:08.091Z"
+    },
+    {
+      "id": "bug-061",
+      "timestamp": "2026-05-23T05:18:00+08:00",
+      "error_message": "自动交易盘中监控在非交易日仍执行卖出操作",
+      "file": "backend/app/services/auto_trader.py",
+      "root_cause": "run_intraday_monitor()缺少_is_workday()检查，而run_opening_bell()有此检查。非交易日_scheduler_loop的_tick()仍会触发run_intraday_monitor执行卖出",
+      "fix": "在run_intraday_monitor()开头（重置每日状态后）添加_is_workday()检查，非交易日返回skip并记录日志",
+      "tags": [
+        "auto-trader",
+        "non-trading-day",
+        "sell-bug",
+        "workday-check"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-23T05:18:21.619Z"
+    },
+    {
+      "id": "bug-062",
+      "timestamp": "2026-05-25T07:58:10.396Z",
+      "error_message": "Incorrect value in code",
+      "file": "backend/app/services/trading.py",
+      "root_cause": "Had \"profit\"",
+      "fix": "Changed to \"fee\"",
+      "tags": [
+        "auto-detected",
+        "wrong-value",
+        "py"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-05-25T07:58:10.396Z"
     }
   ]
 }

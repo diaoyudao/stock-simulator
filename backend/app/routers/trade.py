@@ -10,7 +10,7 @@ from app.services.trading import (
     create_order, get_orders, cancel_order, check_and_fill_orders,
     record_daily_snapshot, get_daily_snapshots, get_performance_stats,
     get_groups, create_group, rename_group, delete_group, move_to_group,
-    create_alert, get_alerts, cancel_alert, check_alerts,
+    create_alert, get_alerts, cancel_alert, check_alerts, _get_db,
 )
 
 router = APIRouter()
@@ -136,12 +136,18 @@ async def account():
     profit = total - acc["initial_cash"]
     profit_pct = (profit / acc["initial_cash"]) * 100
 
+    # 查询总手续费
+    db = await _get_db()
+    cur = await db.execute("SELECT COALESCE(SUM(fee), 0) FROM transactions")
+    total_fees = (await cur.fetchone())[0]
+
     return {
         "cash": round(acc["cash"], 2),
         "market_value": round(market_value, 2),
         "total_assets": round(total, 2),
         "total_profit": round(profit, 2),
         "profit_pct": round(profit_pct, 2),
+        "total_fees": round(total_fees, 2),
     }
 
 
@@ -238,6 +244,11 @@ async def dashboard():
     profit_pct = (profit / acc_raw["initial_cash"]) * 100
 
     ok, msg = _check_trading_time()
+    # 查询总手续费
+    db = await _get_db()
+    cur = await db.execute("SELECT COALESCE(SUM(fee), 0) FROM transactions")
+    total_fees = (await cur.fetchone())[0]
+
     return {
         "account": {
             "cash": round(acc_raw["cash"], 2),
@@ -245,6 +256,7 @@ async def dashboard():
             "total_assets": round(total, 2),
             "total_profit": round(profit, 2),
             "profit_pct": round(profit_pct, 2),
+            "total_fees": round(total_fees, 2),
         },
         "positions": positions_raw,
         "market_status": {

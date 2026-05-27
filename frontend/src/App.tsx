@@ -259,6 +259,7 @@ function AccountBar({ account }: { account: AccountInfo }) {
       <div><span className="label">现金</span><span className="value">¥{account.cash.toLocaleString()}</span></div>
       <div><span className="label">持仓市值</span><span className="value">¥{account.market_value.toLocaleString()}</span></div>
       <div><span className="label">盈亏</span><span className={`value ${profitClass}`}>{account.total_profit >= 0 ? "+" : ""}¥{account.total_profit.toLocaleString()} ({account.profit_pct.toFixed(2)}%)</span></div>
+      <div><span className="label">手续费</span><span className="value muted">¥{account.total_fees.toFixed(2)}</span></div>
     </div>
   );
 }
@@ -278,6 +279,15 @@ function NotificationBell() {
     if (mapped.length > prevCountRef.current && prevCountRef.current > 0) {
       const newOnes = mapped.slice(prevCountRef.current);
       for (const a of newOnes) toast(`${a.name}: ${a.message}`);
+    }
+    // 已在面板显示过的提醒自动关闭（下次轮询时清除）
+    if (prevCountRef.current > 0 && mapped.length > 0) {
+      for (const a of mapped) {
+        try { await api.cancelAlert(a.id); } catch {}
+      }
+      setTriggeredAlerts([]);
+      prevCountRef.current = 0;
+      return;
     }
     prevCountRef.current = mapped.length;
     setTriggeredAlerts(mapped);
@@ -827,11 +837,11 @@ function SectorsTab({ onSelectSector, onSelectStock }: { onSelectSector: (filter
         <tr><th>行业</th><th>涨跌幅</th><th>家数</th><th>领涨股</th><th>涨幅</th><th>总金额</th><th>主力净额</th><th>强度</th></tr>
       </thead>
       <tbody>
-        {sectors.map((s) => {
+        {sectors.map((s, i) => {
           const strength = getStrengthLabel(s.main_net ?? 0, s.total_amount ?? 0);
           const barWidth = Math.min(Math.abs(strength.value) * 3, 100);
           return (
-            <tr key={s.name}>
+            <tr key={`${s.name}-${i}`}>
               <td className="sector-name"><button className="stock-link" onClick={() => onSelectSector({sector: s.name})}>{s.name}</button></td>
               <td className={s.avg_change_pct >= 0 ? "profit" : "loss"}>{s.avg_change_pct >= 0 ? "+" : ""}{s.avg_change_pct.toFixed(2)}%</td>
               <td className="sector-count">{s.up_count}</td>
@@ -974,7 +984,7 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
       </div>
       <div className="table-wrap"><table className="stock-table">
         <thead>
-          <tr><th>时间</th><th>操作</th><th>代码</th><th>名称</th><th>数量</th><th>价格</th><th>金额</th></tr>
+          <tr><th>时间</th><th>操作</th><th>代码</th><th>名称</th><th>数量</th><th>价格</th><th>金额</th><th>手续费</th></tr>
         </thead>
         <tbody>
           {transactions.map((t) => (
@@ -986,6 +996,7 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
               <td>{t.quantity}</td>
               <td>{t.price.toFixed(3)}</td>
               <td>¥{t.amount.toFixed(2)}</td>
+              <td className="fee-cell">¥{(t.fee ?? 0).toFixed(2)}</td>
             </tr>
           ))}
         </tbody>
@@ -1215,18 +1226,23 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
   const [maxPrice, setMaxPrice] = useState(5);
   const [topN, setTopN] = useState(30);
   const [excludeSt, setExcludeSt] = useState(true);
-  const [strategy, setStrategy] = useState<"balanced" | "oversold_bounce">("balanced");
+  const [strategy, setStrategy] = useState<"balanced" | "oversold_bounce" | "momentum" | "value" | "volume_breakout">("balanced");
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
 
   const STRATEGY_DESC: Record<string, string> = {
     balanced: "8因子均衡打分排序",
     oversold_bounce: "筛选连跌≥2天+放量企稳的小盘超跌股",
+    momentum: "追涨强势股，高动量+放量确认+活跃换手",
+    value: "低PE/PB估值洼地，基本面安全边际优先",
+    volume_breakout: "放量突破形态，量价齐升+接近高点",
   };
 
   // 切换策略时自动调整默认参数
   useEffect(() => {
-    if (strategy === "oversold_bounce") {
+    if (strategy === "oversold_bounce" || strategy === "value") {
       if (maxPrice <= 5) setMaxPrice(8);
+    } else if (strategy === "momentum" || strategy === "volume_breakout") {
+      if (maxPrice <= 5) setMaxPrice(10);
     }
   }, [strategy]);
 
@@ -1255,6 +1271,9 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
             <select value={strategy} onChange={e => setStrategy(e.target.value as any)}>
               <option value="balanced">综合打分</option>
               <option value="oversold_bounce">超跌反弹（小市值）</option>
+              <option value="momentum">动量追涨</option>
+              <option value="value">价值低吸</option>
+              <option value="volume_breakout">放量突破</option>
             </select>
           </label>
           <label>价格区间
@@ -1348,6 +1367,8 @@ const factorLabel: Record<string, string> = {
   momentum: "动量", volume_ratio: "量比", turnover: "换手",
   pe_score: "PE估值", pb_score: "PB估值", amplitude: "振幅",
   liquidity: "流动性", size_score: "市值",
+  oversold_depth: "超跌深度", bounce_signal: "反弹信号",
+  breakout_signal: "突破信号",
 };
 
 // ── AutoTradeTab ───────────────────────────────────────────
@@ -1486,6 +1507,9 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
             <select value={config.strategy || "oversold_bounce"} onChange={e => setConfig({ ...config, strategy: e.target.value })}>
               <option value="oversold_bounce">超跌反弹（小市值）</option>
               <option value="balanced">综合打分</option>
+              <option value="momentum">动量追涨</option>
+              <option value="value">价值低吸</option>
+              <option value="volume_breakout">放量突破</option>
             </select>
           </label>
           <label>选股数量
@@ -1547,7 +1571,7 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
             <tbody>
               {logs.map((log) => (
                 <tr key={log.id} className={log.success === 0 ? "error-row" : ""}>
-                  <td>{new Date(log.created_at * 1000).toLocaleTimeString("zh-CN")}</td>
+                  <td>{new Date(log.created_at * 1000).toLocaleString("zh-CN")}</td>
                   <td><span className={`log-type ${log.run_type}`}>{log.run_type === "opening_bell" ? "开盘" : log.run_type === "intraday_monitor" ? "监控" : "手动"}</span></td>
                   <td><span className={`log-action ${log.action}`}>{log.action === "buy" ? "买入" : log.action === "sell" ? "卖出" : log.action === "skip" ? "跳过" : log.action === "circuit_break" ? "熔断" : log.action}</span></td>
                   <td>{log.code ? `${log.code} ${log.name}` : "—"}</td>

@@ -416,6 +416,38 @@ _STRATEGIES = {
                           "PB估值": "pb_score", "PE估值": "pe_score", "换手": "turnover"},
         "top_factors": ["超跌深度", "反弹信号", "量比", "市值"],
     },
+    "momentum": {
+        "name": "动量追涨",
+        "weights": {"momentum": 35, "volume_ratio": 20, "turnover": 15,
+                    "amplitude": 5, "liquidity": 10, "size_score": 10,
+                    "pe_score": 3, "pb_score": 2},
+        "filters": {"min_price_change": 2, "min_volume_ratio": 1.5},
+        "factor_labels": {"动量": "momentum", "量比": "volume_ratio", "换手": "turnover",
+                          "流动性": "liquidity", "市值": "size_score", "振幅": "amplitude",
+                          "PE估值": "pe_score", "PB估值": "pb_score"},
+        "top_factors": ["动量", "量比", "换手", "流动性"],
+    },
+    "value": {
+        "name": "价值低吸",
+        "weights": {"pe_score": 30, "pb_score": 25, "size_score": 15,
+                    "liquidity": 10, "turnover": 5, "momentum": 5,
+                    "volume_ratio": 5, "amplitude": 5},
+        "filters": {"max_price_change": 3, "max_pe": 50, "max_pb": 5},
+        "factor_labels": {"PE估值": "pe_score", "PB估值": "pb_score", "市值": "size_score",
+                          "流动性": "liquidity", "换手": "turnover", "动量": "momentum",
+                          "量比": "volume_ratio", "振幅": "amplitude"},
+        "top_factors": ["PE估值", "PB估值", "市值", "流动性"],
+    },
+    "volume_breakout": {
+        "name": "放量突破",
+        "weights": {"breakout_signal": 30, "volume_ratio": 25, "momentum": 20,
+                    "amplitude": 10, "turnover": 8, "liquidity": 5, "size_score": 2},
+        "filters": {"min_price_change": 1, "min_volume_ratio": 1.2},
+        "factor_labels": {"突破信号": "breakout_signal", "量比": "volume_ratio", "动量": "momentum",
+                          "振幅": "amplitude", "换手": "turnover", "流动性": "liquidity",
+                          "市值": "size_score"},
+        "top_factors": ["突破信号", "量比", "动量", "振幅"],
+    },
 }
 
 _screen_cache: BoundedCache = BoundedCache(32)
@@ -447,6 +479,9 @@ async def screen_stocks(
     策略:
     - balanced: 综合打分（默认8因子均衡）
     - oversold_bounce: 超跌反弹小市值（连跌+放量企稳+小盘）
+    - momentum: 动量追涨（追涨强势股+放量确认）
+    - value: 价值低吸（低PE/PB估值洼地）
+    - volume_breakout: 放量突破（量价齐升+接近高点）
     """
     now = time.time()
     cache_key = f"{min_price}:{max_price}:{top_n}:{exclude_st}:{strategy}"
@@ -484,14 +519,26 @@ def _screen_compute(
             continue
         if exclude_st and ("ST" in s.get("名称", "") or "st" in s.get("名称", "")):
             continue
-        # 策略过滤：连跌天数、涨幅上限、市值上限
+        # 策略过滤
         pc = s.get("涨跌幅", 0) or 0
         max_pc = strat_filters.get("max_price_change", 999)
         if max_pc < pc:
             continue
+        min_pc = strat_filters.get("min_price_change", -999)
+        if min_pc > pc:
+            continue
         mc = s.get("总市值", 0) or 0
         max_mc = strat_filters.get("max_market_cap_yi", 0)
         if max_mc > 0 and mc / 1e8 > max_mc:
+            continue
+        min_vr = strat_filters.get("min_volume_ratio", 0)
+        if min_vr > 0 and (s.get("量比", 0) or 0) < min_vr:
+            continue
+        max_pe_f = strat_filters.get("max_pe", 0)
+        if max_pe_f > 0 and (s.get("市盈率-动态", 999) or 999) > max_pe_f:
+            continue
+        max_pb_f = strat_filters.get("max_pb", 0)
+        if max_pb_f > 0 and (s.get("市净率", 999) or 999) > max_pb_f:
             continue
         pool.append(s)
 
@@ -580,12 +627,34 @@ def _screen_compute(
             bounce += 20  # 振幅放大说明多空博弈激烈
         factors.setdefault("bounce_signal", []).append(bounce)
 
+        # ── 放量突破特有因子 ──
+        # 突破信号：接近最高价 + 量比放大 + 涨幅确认
+        breakout = 0
+        if high > low and price > 0:
+            proximity = (price - low) / (high - low)
+            breakout += proximity * 40
+        if vol_ratio >= 2.0:
+            breakout += 35
+        elif vol_ratio >= 1.5:
+            breakout += 25
+        elif vol_ratio >= 1.2:
+            breakout += 15
+        if change_pct > 5:
+            breakout += 25
+        elif change_pct > 3:
+            breakout += 20
+        elif change_pct > 1:
+            breakout += 15
+        elif change_pct > 0:
+            breakout += 5
+        factors.setdefault("breakout_signal", []).append(min(breakout, 100))
+
     # 因子方向映射
     _FACTOR_DIRECTIONS = {
         "momentum": "desc", "volume_ratio": "desc", "turnover": "desc",
         "pe_score": "desc", "pb_score": "desc", "amplitude": "desc",
         "liquidity": "desc", "size_score": "desc",
-        "oversold_depth": "desc", "bounce_signal": "desc",
+        "oversold_depth": "desc", "bounce_signal": "desc", "breakout_signal": "desc",
     }
 
     # 归一化

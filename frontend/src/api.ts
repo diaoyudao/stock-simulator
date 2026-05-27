@@ -183,6 +183,7 @@ export interface AccountInfo {
   total_assets: number;
   total_profit: number;
   profit_pct: number;
+  total_fees: number;
 }
 
 export interface Position {
@@ -205,6 +206,7 @@ export interface Transaction {
   quantity: number;
   price: number;
   amount: number;
+  fee: number;
   created_at: number;
 }
 

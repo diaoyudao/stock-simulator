@@ -524,6 +524,8 @@
 
 .buy-label { color: var(--profit); }
 .sell-label { color: var(--loss); }
+.fee-cell { color: var(--muted); font-size: 0.85em; }
+.account-bar .value.muted { color: var(--muted); font-size: 0.9em; }
 
 .pagination {
   display: flex;

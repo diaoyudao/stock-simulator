@@ -1,24 +1,26 @@
 :root {
-  /* ─── 赛博朋克 Cyberpunk ─── */
-  --bg: #0a0a12;
-  --bg-deep: #050509;
-  --surface: #12121f;
-  --surface-raised: #1a1a2e;
-  --border: #2a2a4a;
-  --border-light: #3a3a6a;
-  --text: #b8b8d0;
-  --text-h: #e8e8ff;
-  --text-muted: #6868a0;
+  /* ─── Neon Terminal ─── */
+  --bg: #06060e;
+  --bg-deep: #030308;
+  --surface: #0c0c1a;
+  --surface-raised: #14142a;
+  --border: #1e1e40;
+  --border-light: #2e2e5a;
+  --text: #a0a0c8;
+  --text-h: #e0e0ff;
+  --text-muted: #505080;
 
   --accent: #00f0ff;
-  --accent-dim: #007a82;
-  --accent-glow: rgba(0, 240, 255, 0.2);
-  --on-accent: #0a0a12;
+  --accent-dim: #006a70;
+  --accent-glow: rgba(0, 240, 255, 0.25);
+  --accent2: #ff2d78;
+  --accent2-glow: rgba(255, 45, 120, 0.2);
+  --on-accent: #06060e;
 
   --profit: #ff2d78;
-  --profit-bg: rgba(255, 45, 120, 0.1);
+  --profit-bg: rgba(255, 45, 120, 0.08);
   --loss: #00e87b;
-  --loss-bg: rgba(0, 232, 123, 0.1);
+  --loss-bg: rgba(0, 232, 123, 0.08);
   --buy-bg: #0a1a12;
   --sell-bg: #1a0a14;
 
@@ -41,21 +43,21 @@
   --radius-md: 6px;
   --radius-lg: 10px;
 
-  --font-display: "Orbitron", "Rajdhani", "Noto Serif SC", sans-serif;
+  --font-display: "Orbitron", "Rajdhani", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
-  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", sans-serif;
+  --font-body: "Rajdhani", "Noto Sans SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 20px var(--accent-glow);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 24px var(--accent-glow), 0 0 60px rgba(0, 240, 255, 0.08);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 body {
@@ -65,24 +67,54 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-image:
-    radial-gradient(ellipse at 15% 0%, rgba(0, 240, 255, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 100%, rgba(255, 45, 120, 0.04) 0%, transparent 50%);
+    radial-gradient(ellipse at 10% 0%, rgba(0, 240, 255, 0.07) 0%, transparent 40%),
+    radial-gradient(ellipse at 90% 100%, rgba(255, 45, 120, 0.05) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 50%, rgba(0, 240, 255, 0.02) 0%, transparent 60%);
+  background-attachment: fixed;
 }
 
-/* 镜面光泽 */
-body::after {
+/* 扫描线效果 */
+body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: linear-gradient(
-    165deg,
-    rgba(0, 240, 255, 0.02) 0%,
-    transparent 30%,
-    transparent 70%,
-    rgba(255, 45, 120, 0.015) 100%
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 240, 255, 0.015) 2px,
+    rgba(0, 240, 255, 0.015) 4px
   );
   pointer-events: none;
-  z-index: 9998;
+  z-index: 9997;
+  animation: scanlines 8s linear infinite;
+}
+
+@keyframes scanlines {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(4px); }
+}
+
+/* 移动扫描光束 */
+body::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.12;
+  z-index: 9996;
+  pointer-events: none;
+  animation: scan-beam 6s ease-in-out infinite;
+  box-shadow: 0 0 20px var(--accent), 0 0 60px var(--accent-glow);
+}
+
+@keyframes scan-beam {
+  0%, 100% { top: -2px; opacity: 0; }
+  5% { opacity: 0.12; }
+  95% { opacity: 0.12; }
+  100% { top: 100vh; opacity: 0; }
 }
 
 #root { width: 100%; min-height: 100vh; }

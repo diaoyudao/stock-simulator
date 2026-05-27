@@ -61,6 +61,7 @@ async def _ensure_tables(db: aiosqlite.Connection):
             quantity INTEGER NOT NULL,
             price REAL NOT NULL,
             amount REAL NOT NULL,
+            fee REAL NOT NULL DEFAULT 0,
             created_at REAL NOT NULL
         );
         INSERT OR IGNORE INTO account (id, cash) VALUES (1, 100000.0);
@@ -155,6 +156,10 @@ async def _ensure_tables(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE pending_orders ADD COLUMN avg_cost REAL NOT NULL DEFAULT 0.0")
     except Exception:
         pass
+    try:
+        await db.execute("ALTER TABLE transactions ADD COLUMN fee REAL NOT NULL DEFAULT 0")
+    except Exception:
+        pass
 
 
 async def get_account() -> dict:
@@ -237,8 +242,8 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
             )
 
         await db.execute(
-            "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'buy', ?, ?, ?, ?)",
-            (code, name, quantity, price, amount, time.time()),
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, 'buy', ?, ?, ?, ?, ?)",
+            (code, name, quantity, price, amount, total_fee, time.time()),
         )
         await db.commit()
 
@@ -269,10 +274,10 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
         else:
             await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
 
-        profit = (price - pos["avg_cost"]) * quantity
+        profit = (price - pos["avg_cost"]) * quantity - total_fee
         await db.execute(
-            "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, 'sell', ?, ?, ?, ?)",
-            (code, pos["name"], quantity, price, amount, time.time()),
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, 'sell', ?, ?, ?, ?, ?)",
+            (code, pos["name"], quantity, price, amount, total_fee, time.time()),
         )
         await db.commit()
 
@@ -474,9 +479,10 @@ async def _fill_order(db: aiosqlite.Connection, order: aiosqlite.Row, fill_price
         await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (net_proceeds,))
 
     amount = order["quantity"] * fill_price
+    _, _, _, fill_fee = _calc_fees(amount, is_sell=(order["action"] == "sell"))
     await db.execute(
-        "INSERT INTO transactions (code, name, action, quantity, price, amount, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (order["code"], order["name"], order["action"], order["quantity"], fill_price, amount, time.time()),
+        "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (order["code"], order["name"], order["action"], order["quantity"], fill_price, amount, fill_fee, time.time()),
     )
 
     await db.execute(
@@ -585,7 +591,11 @@ async def get_performance_stats() -> dict:
         for s in sells:
             stats = buy_stats.get(s["code"])
             avg_buy_price = stats["avg_price"] if stats else s["price"]
-            profit = (s["price"] - avg_buy_price) * s["quantity"]
+            buy_amount = avg_buy_price * s["quantity"]
+            sell_amount = s["price"] * s["quantity"]
+            _, _, _, buy_fee = _calc_fees(buy_amount)
+            _, _, _, sell_fee = _calc_fees(sell_amount, is_sell=True)
+            profit = (s["price"] - avg_buy_price) * s["quantity"] - buy_fee - sell_fee
             if profit > 0:
                 wins += 1
                 total_wins += profit

@@ -14,6 +14,7 @@ from app.services.trading import (
     get_account,
     get_positions,
     _get_db,
+    _calc_fees,
 )
 
 logger = logging.getLogger(__name__)
@@ -398,6 +399,10 @@ async def run_intraday_monitor() -> dict:
                 summary["sells"] += 1
                 amt = current_price * sell_qty
                 profit = (current_price - avg_cost) * sell_qty
+                # 扣除买卖手续费
+                _, _, _, buy_fee = _calc_fees(avg_cost * sell_qty)
+                _, _, _, sell_fee = _calc_fees(current_price * sell_qty, is_sell=True)
+                profit -= buy_fee + sell_fee
                 # 更新连亏计数
                 if profit < 0:
                     new_losses = (config.get("consecutive_losses", 0) or 0) + 1

@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-05-26T01:35:43.032Z
-> Files: 557 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-05-28T03:32:32.148Z
+> Files: 560 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -10,9 +10,9 @@
 - `CLAUDE.md` — CLAUDE.md (~1562 tok)
 - `DEPLOY.md` — 部署指南 (~399 tok)
 - `DESIGN.md` — StockSimulator Design System (~1091 tok)
-- `docs/metrics-dashboard.md` — 产品指标看板规范（North Star + Input/Health/Performance 4层体系）(~1710 tok)
 - `dev.sh` — StockSimulator 开发服务器启动/停止脚本 (~764 tok)
 - `docker-compose.yml` — Docker Compose services (~40 tok)
+- `docs/metrics-dashboard.md` — 产品指标看板规范（North Star + Input/Health/Performance 4层体系） (~1710 tok)
 - `Effective harnesses for long-running agents（长周期智能体的有效调度框架）.md` — Effective harnesses for long-running agents（长周期智能体的有效调度框架） (~869 tok)
 - `init.sh` — StockSimulator 环境启动脚本 (~341 tok)
 - `PRODUCT.md` — StockSimulator (~405 tok)
@@ -39,6 +39,8 @@
 
 - `curried-jumping-wadler-agent-a3226d73dd999130b.md` — A股实时行情数据源替代方案调研报告 (~1391 tok)
 - `curried-jumping-wadler.md` — 自动交易系统 — 策略驱动闭环 (~1709 tok)
+- `merry-seeking-pearl.md` — 自动交易系统增强计划 (~847 tok)
+- `stateful-sprouting-swan.md` — 多策略切换支持 (~437 tok)
 
 ## C:/Users/gaine/.claude/projects/e--project-StockSimulator/memory/
 
@@ -770,17 +772,17 @@
 ## backend/app/routers/
 
 - `ai.py` — API: 3 endpoints (~524 tok)
-- `auto_trade.py` — 自动交易 API 路由 — 配置/开关/手动触发/状态/日志。 (~680 tok)
+- `auto_trade.py` — 自动交易 API 路由 — 配置/开关/手动触发/状态/日志。 (~794 tok)
 - `market.py` — API: 17 endpoints (~1589 tok)
-- `trade.py` — API: 20 endpoints (~3716 tok)
+- `trade.py` — API: 17 endpoints (~3839 tok)
 
 ## backend/app/services/
 
-- `ai_analysis.py` — AI股票分析服务 — 智谱GLM API集成 + 规则评分引擎 + 多因子选股 (~5985 tok)
+- `ai_analysis.py` — AI股票分析服务 — 智谱GLM API集成 + 规则评分引擎 + 多因子选股 (~6864 tok)
 - `astock_data.py` — get_prefix, get_tdx_client, tdx_bars, tdx_quotes, _tencent_quote_sync(500/批,绕代理) (~8700 tok)
-- `auto_trader.py` — 自动交易系统 — 策略驱动闭环：AI选股买入 + 止损止盈卖出 + 完整风控。 (~5130 tok)
+- `auto_trader.py` — 自动交易系统 — T+1规则 + 追踪止损 + 收盘扫描 + 评分加权配置 + 业绩分析。 (~12000 tok)
 - `market_data.py` — BoundedCache: cleanup (~30222 tok)
-- `trading.py` — get_account, get_positions, get_transactions, buy_stock (~8115 tok)
+- `trading.py` — get_account, get_positions, get_transactions, buy_stock (~9224 tok)
 
 ## docs/
 
@@ -790,15 +792,15 @@
 
 - `browser-test-autotrade.mjs` — BASE: ok, fail, safeText, test (~1203 tok)
 - `browser-test.mjs` — BASE: ok, fail, safeText, test (~1401 tok)
-- `index.html` — A股低价股模拟炒股 (~176 tok)
+- `index.html` — A股低价股模拟炒股 (~199 tok)
 - `vite.config.ts` (~74 tok)
 
 ## frontend/src/
 
-- `api.ts` — Exports SpotResult, StockItem, StockDetail, EtfItem + 30 more (~5051 tok)
-- `App.css` — Styles: 86 rules (~15229 tok)
-- `App.tsx` — 可搜索下拉组件 (~20818 tok)
-- `index.css` — Styles: 6 rules, 40 vars (~705 tok)
+- `api.ts` — Exports SpotResult, StockItem, StockDetail, EtfItem + 30 more (~5116 tok)
+- `App.css` — Styles: 78 rules (~15908 tok)
+- `App.tsx` — 可搜索下拉组件 (~22067 tok)
+- `index.css` — Styles: 8 rules, 42 vars (~957 tok)
 
 ## research_ai_stock/
 

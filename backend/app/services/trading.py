@@ -1,6 +1,7 @@
 import asyncio
 import aiosqlite
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "stock_sim.db"
@@ -160,6 +161,69 @@ async def _ensure_tables(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE transactions ADD COLUMN fee REAL NOT NULL DEFAULT 0")
     except Exception:
         pass
+    try:
+        await db.execute("ALTER TABLE positions ADD COLUMN buy_date TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        await db.execute("ALTER TABLE positions ADD COLUMN high_water_mark REAL NOT NULL DEFAULT 0.0")
+    except Exception:
+        pass
+    try:
+        await db.execute("ALTER TABLE auto_trading_config ADD COLUMN trailing_stop_enabled INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        await db.execute("ALTER TABLE auto_trading_config ADD COLUMN trailing_stop_pct REAL NOT NULL DEFAULT 5.0")
+    except Exception:
+        pass
+    try:
+        await db.execute("ALTER TABLE auto_trading_config ADD COLUMN last_closing_bell_run TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+    # auto_trade_log CHECK迁移: 增加 'closing_bell' run_type
+    try:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS auto_trade_log_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_type TEXT NOT NULL CHECK(run_type IN ('opening_bell','intraday_monitor','manual','closing_bell')),
+                action TEXT NOT NULL CHECK(action IN ('screen','buy','sell','skip','error','circuit_break')),
+                code TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL DEFAULT '',
+                quantity INTEGER NOT NULL DEFAULT 0,
+                price REAL NOT NULL DEFAULT 0.0,
+                amount REAL NOT NULL DEFAULT 0.0,
+                reason TEXT NOT NULL DEFAULT '',
+                signal_data TEXT NOT NULL DEFAULT '',
+                success INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL
+            );
+            INSERT OR IGNORE INTO auto_trade_log_new SELECT * FROM auto_trade_log;
+            DROP TABLE IF EXISTS auto_trade_log;
+            ALTER TABLE auto_trade_log_new RENAME TO auto_trade_log;
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_auto_log_created ON auto_trade_log(created_at)")
+    except Exception:
+        pass
+    await db.executescript("""
+        CREATE TABLE IF NOT EXISTS auto_trade_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            total_assets REAL NOT NULL,
+            cash REAL NOT NULL,
+            positions_value REAL NOT NULL,
+            daily_pnl REAL NOT NULL DEFAULT 0,
+            daily_pnl_pct REAL NOT NULL DEFAULT 0,
+            buys INTEGER NOT NULL DEFAULT 0,
+            sells INTEGER NOT NULL DEFAULT 0,
+            buy_amount REAL NOT NULL DEFAULT 0,
+            sell_amount REAL NOT NULL DEFAULT 0,
+            win_count INTEGER NOT NULL DEFAULT 0,
+            loss_count INTEGER NOT NULL DEFAULT 0,
+            consecutive_losses INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        );
+    """)
 
 
 async def get_account() -> dict:
@@ -217,6 +281,7 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
     _, _, _, total_fee = _calc_fees(amount)
     total_cost = amount + total_fee
 
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
     async with _trade_lock:
         db = await _get_db()
         cur = await db.execute("SELECT cash FROM account WHERE id = 1")
@@ -226,19 +291,21 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
 
         await db.execute("UPDATE account SET cash = cash - ? WHERE id = 1", (total_cost,))
 
-        cur = await db.execute("SELECT quantity, avg_cost FROM positions WHERE code = ?", (code,))
+        cur = await db.execute("SELECT quantity, avg_cost, buy_date FROM positions WHERE code = ?", (code,))
         pos = await cur.fetchone()
         if pos:
             total_qty = pos["quantity"] + quantity
             new_avg = (pos["quantity"] * pos["avg_cost"] + quantity * price) / total_qty
+            old_hwm = pos["high_water_mark"] or 0
+            new_hwm = max(old_hwm, price)
             await db.execute(
-                "UPDATE positions SET quantity = ?, avg_cost = ?, name = ? WHERE code = ?",
-                (total_qty, new_avg, name, code),
+                "UPDATE positions SET quantity = ?, avg_cost = ?, name = ?, high_water_mark = ? WHERE code = ?",
+                (total_qty, new_avg, name, new_hwm, code),
             )
         else:
             await db.execute(
-                "INSERT INTO positions (code, name, quantity, avg_cost) VALUES (?, ?, ?, ?)",
-                (code, name, quantity, price),
+                "INSERT INTO positions (code, name, quantity, avg_cost, buy_date, high_water_mark) VALUES (?, ?, ?, ?, ?, ?)",
+                (code, name, quantity, price, today, price),
             )
 
         await db.execute(
@@ -258,13 +325,17 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
     _, _, _, total_fee = _calc_fees(amount, is_sell=True)
     net_proceeds = amount - total_fee
 
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
     async with _trade_lock:
         db = await _get_db()
-        cur = await db.execute("SELECT quantity, avg_cost, name FROM positions WHERE code = ?", (code,))
+        cur = await db.execute("SELECT quantity, avg_cost, name, buy_date FROM positions WHERE code = ?", (code,))
         pos = await cur.fetchone()
         if not pos or pos["quantity"] < quantity:
             available = pos["quantity"] if pos else 0
             return {"error": f"持仓不足，可用 {available} 股"}
+
+        if pos["buy_date"] == today:
+            return {"error": "T+1限制：今日买入的股票不能卖出"}
 
         await db.execute("UPDATE account SET cash = cash + ? WHERE id = 1", (net_proceeds,))
 

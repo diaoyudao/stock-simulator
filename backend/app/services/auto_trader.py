@@ -209,8 +209,19 @@ async def check_pre_trade_risks(config: dict, price: float, quantity: int) -> Ri
     return RiskResult(True)
 
 
-def evaluate_sell_signal(pnl_pct: float, config: dict) -> str:
-    """返回信号类型: 'none' | 'tier2_full' | 'tier1_half'"""
+def evaluate_sell_signal(
+    pnl_pct: float, config: dict,
+    high_water_mark: float = 0, current_price: float = 0, avg_cost: float = 0,
+) -> str:
+    """返回信号类型: 'none' | 'tier2_full' | 'tier1_half' | 'trailing_stop_full'"""
+    # 追踪止损（盈利时优先判断）
+    trailing_enabled = config.get("trailing_stop_enabled", 0)
+    trailing_pct = config.get("trailing_stop_pct", 5.0)
+    if trailing_enabled and high_water_mark > avg_cost > 0 and current_price > 0:
+        drop_pct = (high_water_mark - current_price) / high_water_mark * 100
+        if drop_pct >= trailing_pct:
+            return "trailing_stop_full"
+
     sl2 = config.get("stop_loss_tier2", -10)
     tp2 = config.get("take_profit_tier2", 20)
     sl1 = config.get("stop_loss_tier1", -5)
@@ -270,6 +281,11 @@ async def run_opening_bell() -> dict:
         pos_value = sum(p.get("quantity", 0) * p.get("avg_cost", 0) for p in positions)
         total_assets = (account.get("cash") or 0) + pos_value
 
+        # 评分加权分配
+        per_max = total_assets * (config.get("max_position_pct", 10) / 100)
+        daily_budget = total_assets * (config.get("max_daily_buy_pct", 30) / 100) - (config.get("daily_bought_amount", 0) or 0)
+        total_score = sum(max(s.get("综合得分", 0), 1) for s in picks)
+
         for stock in picks:
             code = stock.get("代码", "")
             name = stock.get("名称", "")
@@ -288,11 +304,9 @@ async def run_opening_bell() -> dict:
                           reason="无法获取价格")
                 continue
 
-            # 计算等权仓位
-            per_max = total_assets * (config.get("max_position_pct", 10) / 100)
-            equal_alloc = total_assets / len(picks)
-            daily_budget = total_assets * (config.get("max_daily_buy_pct", 30) / 100) - (config.get("daily_bought_amount", 0) or 0)
-            alloc = min(per_max, equal_alloc, daily_budget)
+            # 评分加权仓位
+            weight = max(score, 1) / total_score if total_score > 0 else 1 / len(picks)
+            alloc = min(weight * daily_budget, per_max, daily_budget)
             if alloc <= 0:
                 summary["skips"] += 1
                 await _log("opening_bell", "skip", code=code, name=name,
@@ -321,7 +335,7 @@ async def run_opening_bell() -> dict:
                 await _update_field(daily_bought_amount=new_daily)
                 await _log("opening_bell", "buy", code=code, name=name,
                           quantity=qty, price=price, amount=amt,
-                          reason=f"score={score}", signal_data=json.dumps(stock.get("因子明细", {}), ensure_ascii=False))
+                          reason=f"score={score}, weight={weight:.2f}", signal_data=json.dumps(stock.get("因子明细", {}), ensure_ascii=False))
             else:
                 summary["errors"] += 1
                 await _log("opening_bell", "error", code=code, name=name,
@@ -362,18 +376,31 @@ async def run_intraday_monitor() -> dict:
         if total_assets > peak:
             await _update_field(peak_total_assets=total_assets)
 
+        db = await _get_db()
         for pos in positions:
             code = pos.get("code", "")
             name = pos.get("name", "")
             qty = pos.get("quantity", 0)
             avg_cost = pos.get("avg_cost", 0)
+            buy_date = pos.get("buy_date", "")
+            hwm = pos.get("high_water_mark", 0) or 0
 
             current_price = price_map.get(code)
             if not current_price or current_price <= 0:
                 continue
 
+            # 更新最高价标记
+            if current_price > hwm:
+                hwm = current_price
+                await db.execute("UPDATE positions SET high_water_mark = ? WHERE code = ?", (hwm, code))
+                await db.commit()
+
+            # T+1检查：当日买入不能卖出
+            if buy_date == _today_str():
+                continue
+
             pnl_pct = (current_price - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
-            signal = evaluate_sell_signal(pnl_pct, config)
+            signal = evaluate_sell_signal(pnl_pct, config, hwm, current_price, avg_cost)
 
             if signal == "none":
                 continue
@@ -383,9 +410,13 @@ async def run_intraday_monitor() -> dict:
                 continue
 
             # 计算卖出数量
-            if signal == "tier2_full":
+            if signal in ("tier2_full", "trailing_stop_full"):
                 sell_qty = qty
-                sig_label = f"{'止盈' if pnl_pct > 0 else '止损'}全出({pnl_pct:+.1f}%)"
+                if signal == "trailing_stop_full":
+                    drop = (hwm - current_price) / hwm * 100 if hwm > 0 else 0
+                    sig_label = f"追踪止损全出(高点{hwm:.2f}回撤{drop:.1f}%)"
+                else:
+                    sig_label = f"{'止盈' if pnl_pct > 0 else '止损'}全出({pnl_pct:+.1f}%)"
             else:  # tier1_half
                 sell_qty = int(qty * 0.5 // 100) * 100
                 sig_label = f"{'止盈' if pnl_pct > 0 else '止损'}减半({pnl_pct:+.1f}%)"
@@ -434,6 +465,170 @@ async def run_intraday_monitor() -> dict:
         logger.error("盘中监控异常: %s", e, exc_info=True)
         summary["errors"] += 1
         await _log("intraday_monitor", "error", reason=str(e)[:200], success=0)
+
+    return summary
+
+
+# ── Closing Bell Routine ────────────────────────────────────
+
+async def run_closing_bell() -> dict:
+    summary = {"action": "closing_bell", "sells": 0, "skips": 0, "errors": 0}
+    try:
+        config = await _reset_daily_state_if_new_day()
+
+        if not _is_workday():
+            await _log("closing_bell", "skip", reason="非交易日")
+            return {**summary, "reason": "非交易日"}
+
+        positions = await get_positions()
+        price_map = await _build_price_map()
+        account = await get_account()
+        pos_value = sum(
+            p.get("quantity", 0) * (price_map.get(p.get("code", ""), 0) or p.get("avg_cost", 0))
+            for p in positions
+        )
+        total_assets = (account.get("cash") or 0) + pos_value
+
+        # 收盘前最后检查持仓（复用卖出逻辑）
+        db = await _get_db()
+        for pos in positions:
+            code = pos.get("code", "")
+            name = pos.get("name", "")
+            qty = pos.get("quantity", 0)
+            avg_cost = pos.get("avg_cost", 0)
+            buy_date = pos.get("buy_date", "")
+            hwm = pos.get("high_water_mark", 0) or 0
+
+            current_price = price_map.get(code)
+            if not current_price or current_price <= 0:
+                continue
+
+            # 更新HWM
+            if current_price > hwm:
+                await db.execute("UPDATE positions SET high_water_mark = ? WHERE code = ?", (current_price, code))
+                await db.commit()
+
+            # T+1检查
+            if buy_date == _today_str():
+                continue
+
+            pnl_pct = (current_price - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
+            signal = evaluate_sell_signal(pnl_pct, config, hwm, current_price, avg_cost)
+
+            if signal == "none":
+                continue
+
+            global _tier1_partial_sold
+            if signal == "tier1_half" and code in _tier1_partial_sold:
+                continue
+
+            if signal in ("tier2_full", "trailing_stop_full"):
+                sell_qty = qty
+                if signal == "trailing_stop_full":
+                    drop = (hwm - current_price) / hwm * 100 if hwm > 0 else 0
+                    sig_label = f"收盘-追踪止损({drop:.1f}%)"
+                else:
+                    sig_label = f"收盘-{'止盈' if pnl_pct > 0 else '止损'}全出({pnl_pct:+.1f}%)"
+            else:
+                sell_qty = int(qty * 0.5 // 100) * 100
+                sig_label = f"收盘-{'止盈' if pnl_pct > 0 else '止损'}减半({pnl_pct:+.1f}%)"
+                _tier1_partial_sold.add(code)
+
+            if sell_qty < 100:
+                continue
+
+            result = await sell_stock(code, sell_qty, current_price)
+            if result.get("success"):
+                summary["sells"] += 1
+                profit = (current_price - avg_cost) * sell_qty
+                _, _, _, buy_fee = _calc_fees(avg_cost * sell_qty)
+                _, _, _, sell_fee = _calc_fees(current_price * sell_qty, is_sell=True)
+                profit -= buy_fee + sell_fee
+                if profit < 0:
+                    new_losses = (config.get("consecutive_losses", 0) or 0) + 1
+                    await _update_field(consecutive_losses=new_losses)
+                else:
+                    await _update_field(consecutive_losses=0)
+                await _log("closing_bell", "sell", code=code, name=name,
+                          quantity=sell_qty, price=current_price, amount=current_price * sell_qty,
+                          reason=sig_label, signal_data=json.dumps({"pnl_pct": round(pnl_pct, 2)}))
+            else:
+                summary["errors"] += 1
+                await _log("closing_bell", "error", code=code, name=name,
+                          reason=result.get("error", ""))
+
+        # 记录每日快照
+        try:
+            await db.execute(
+                "INSERT OR REPLACE INTO daily_snapshots (date, cash, positions_value, total) VALUES (?, ?, ?, ?)",
+                (_today_str(), account.get("cash", 0), pos_value, total_assets),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning("收盘快照记录失败: %s", e)
+
+        # 写入业绩表
+        today = _today_str()
+        logs_today = await get_logs(limit=500)
+        today_logs = [l for l in logs_today if l.get("created_at", 0) > time.time() - 86400]
+        buys = sum(1 for l in today_logs if l.get("action") == "buy")
+        sells = sum(1 for l in today_logs if l.get("action") == "sell")
+        buy_amt = sum(l.get("amount", 0) for l in today_logs if l.get("action") == "buy")
+        sell_amt = sum(l.get("amount", 0) for l in today_logs if l.get("action") == "sell")
+        # 从今日sell日志计算盈亏
+        sell_profits = []
+        for l in today_logs:
+            if l.get("action") == "sell" and l.get("success", 1):
+                sd = l.get("signal_data", "")
+                pnl = 0
+                if sd:
+                    try:
+                        pnl = json.loads(sd).get("pnl_pct", 0)
+                    except Exception:
+                        pass
+                sell_profits.append(pnl)
+        win_count = sum(1 for p in sell_profits if p > 0)
+        loss_count = sum(1 for p in sell_profits if p < 0)
+
+        # 计算daily_pnl
+        prev_snap = await db.execute(
+            "SELECT total FROM daily_snapshots WHERE date < ? ORDER BY date DESC LIMIT 1", (today,)
+        )
+        prev_row = await prev_snap.fetchone()
+        prev_total = prev_row["total"] if prev_row else 100000.0
+        daily_pnl = total_assets - prev_total
+        daily_pnl_pct = daily_pnl / prev_total * 100 if prev_total > 0 else 0
+
+        try:
+            await db.execute(
+                """INSERT OR REPLACE INTO auto_trade_performance
+                   (date, total_assets, cash, positions_value, daily_pnl, daily_pnl_pct,
+                    buys, sells, buy_amount, sell_amount, win_count, loss_count,
+                    consecutive_losses, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (today, total_assets, account.get("cash", 0), pos_value,
+                 round(daily_pnl, 2), round(daily_pnl_pct, 2),
+                 buys, sells, round(buy_amt, 2), round(sell_amt, 2),
+                 win_count, loss_count,
+                 config.get("consecutive_losses", 0) or 0, time.time()),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning("业绩记录失败: %s", e)
+
+        # 日汇总日志
+        await _log("closing_bell", "skip",
+                  reason=f"日终汇总: 资产{total_assets:.0f} PnL{daily_pnl:+.0f}({daily_pnl_pct:+.2f}%) 买{buys}卖{sells} 胜{win_count}负{loss_count}")
+
+        # 重置每日状态（为下个交易日准备）
+        await _update_field(daily_bought_amount=0.0, daily_bought_date="")
+        _tier1_partial_sold.clear()
+        await _update_field(last_closing_bell_run=today)
+
+    except Exception as e:
+        logger.error("收盘扫描异常: %s", e, exc_info=True)
+        summary["errors"] += 1
+        await _log("closing_bell", "error", reason=str(e)[:200], success=0)
 
     return summary
 
@@ -495,6 +690,12 @@ async def _tick() -> None:
             logger.info("触发盘中监控")
             await run_intraday_monitor()
 
+    # 收盘窗口: 14:50-14:55，每日一次
+    if 14 * 60 + 50 <= t <= 14 * 60 + 55:
+        if config.get("last_closing_bell_run") != today:
+            logger.info("触发收盘扫描")
+            await run_closing_bell()
+
 
 # ── Status ──────────────────────────────────────────────────
 
@@ -522,5 +723,81 @@ async def get_status() -> dict:
             "sells": sells_today,
             "buy_amount": round(buy_amt, 2),
             "sell_amount": round(sell_amt, 2),
+        },
+    }
+
+
+# ── Performance Analytics ──────────────────────────────────
+
+async def get_performance_analytics(days: int = 90) -> dict:
+    db = await _get_db()
+    cur = await db.execute(
+        "SELECT * FROM auto_trade_performance ORDER BY date DESC LIMIT ?", (days,)
+    )
+    rows = await cur.fetchall()
+    if not rows:
+        return {"daily": [], "metrics": {}}
+
+    records = [dict(r) for r in rows]
+    records.reverse()
+
+    # 汇总指标
+    total_wins = sum(r.get("win_count", 0) for r in records)
+    total_losses = sum(r.get("loss_count", 0) for r in records)
+    total_closed = total_wins + total_losses
+    win_rate = total_wins / total_closed * 100 if total_closed > 0 else 0
+
+    # 总盈亏
+    total_pnl = sum(r.get("daily_pnl", 0) for r in records)
+    total_pnl_pct = (records[-1]["total_assets"] / records[0]["total_assets"] - 1) * 100 if records[0]["total_assets"] > 0 else 0
+
+    # 盈亏比
+    avg_win = total_pnl / total_wins if total_wins > 0 else 0
+    avg_loss = abs(sum(r.get("daily_pnl", 0) for r in records if r.get("daily_pnl", 0) < 0)) / total_losses if total_losses > 0 else 1
+    profit_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+
+    # Sharpe ratio (简化版)
+    returns = [r.get("daily_pnl_pct", 0) for r in records]
+    if len(returns) >= 2:
+        mean_r = sum(returns) / len(returns)
+        std_r = (sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5
+        sharpe = mean_r / std_r * (252 ** 0.5) if std_r > 0 else 0
+    else:
+        sharpe = 0
+
+    # 最大回撤
+    peak = 0
+    max_dd = 0
+    for r in records:
+        ta = r.get("total_assets", 0)
+        if ta > peak:
+            peak = ta
+        dd = (peak - ta) / peak * 100 if peak > 0 else 0
+        if dd > max_dd:
+            max_dd = dd
+
+    return {
+        "daily": [
+            {
+                "date": r["date"],
+                "total_assets": r["total_assets"],
+                "daily_pnl": r["daily_pnl"],
+                "daily_pnl_pct": r["daily_pnl_pct"],
+                "buys": r["buys"],
+                "sells": r["sells"],
+                "win_count": r["win_count"],
+                "loss_count": r["loss_count"],
+            }
+            for r in records
+        ],
+        "metrics": {
+            "total_pnl": round(total_pnl, 2),
+            "total_pnl_pct": round(total_pnl_pct, 2),
+            "win_rate": round(win_rate, 1),
+            "profit_loss_ratio": round(profit_loss_ratio, 2),
+            "sharpe_ratio": round(sharpe, 2),
+            "max_drawdown": round(max_dd, 2),
+            "total_trades": total_closed,
+            "trading_days": len(records),
         },
     }

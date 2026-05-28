@@ -33,7 +33,11 @@
 - **[2026-05-19] 申万行业代码格式**：`ak.sw_index_second_info()` 已不可用（legulegu.com 504），改用硬编码 `_SW_L1_INDUSTRIES` / `_SW_L2_INDUSTRIES` 映射。成分股查询用 `ak.index_component_sw(code)` 只接受纯数字如 "801102"。
 - **[2026-05-19] 板块统一用申万行业**：概念板块（光通信模块等）不再支持筛选。成分股查询只用 `ak.index_component_sw()`，通过硬编码映射查行业代码。
 - **[2026-05-21] get_spot_data()返回list[dict]**：绝对不能当 DataFrame 用（`.empty`/`.columns`/`.iterrows()` 全错）。正确模式：`isinstance(data, list) and data` → `{s.get("代码"): s.get("最新价") for s in data}`。此错误导致自动交易"只买不卖"——盘中监控价格映射永远为空，pnl%永远为0，止损止盈信号永不触发。
+- **[2026-05-28] SQLite CHECK约束修改需重建表**：ALTER TABLE不能修改CHECK约束，必须CREATE TABLE new → INSERT → DROP old → RENAME。auto_trade_log增加'closing_bell' run_type用此模式。
+- **[2026-05-28] Uvicorn热重载可能不生效**：修改router文件后touch可能不够，需完全杀掉进程+清__pycache__+重启才可靠。
 
 ## Decision Log
 
-<!-- Significant technical decisions with rationale. Why X was chosen over Y. -->
+- **[2026-05-28] T+1规则实现方式**：positions表增加buy_date字段，空值视为可卖（兼容迁移前数据），当日买入不能卖出。同时在前端sell_stock和auto_trader卖出逻辑中双重检查。
+- **[2026-05-28] 追踪止损优先级**：盈利时追踪止损 > 固定止盈 > 固定止损。HWM每次monitor更新，追踪止损触发时全仓卖出。
+- **[2026-05-28] 评分加权替代等权**：评分越高仓位越大，按score/total_score比例分配日预算，单股上限max_position_pct。

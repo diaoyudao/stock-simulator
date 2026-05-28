@@ -603,6 +603,7 @@ export const api = {
   },
   runAutoTradeOpening: () => request<any>("/auto-trade/run-opening", { method: "POST" }),
   runAutoTradeMonitor: () => request<any>("/auto-trade/run-monitor", { method: "POST" }),
+  runAutoTradeClosing: () => request<any>("/auto-trade/run-closing", { method: "POST" }),
   resetCircuitBreaker: () => {
     invalidateCache("/auto-trade");
     return request<{ message: string }>("/auto-trade/reset-circuit", { method: "POST" });
@@ -614,4 +615,5 @@ export const api = {
     if (action) qs.set("action", action);
     return request<any[]>(`/auto-trade/logs?${qs}`);
   },
+  getAutoTradePerformance: (days = 90) => request<any>(`/auto-trade/performance?days=${days}`),
 };

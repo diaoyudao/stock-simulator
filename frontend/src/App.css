@@ -2516,6 +2516,22 @@ tr:nth-child(3) .rank-num { color: var(--rank-3); text-shadow: 0 0 8px var(--acc
   border-color: var(--accent);
   box-shadow: 0 0 8px var(--accent-glow);
 }
+.autotrade-grid-risk label.autotrade-full-row {
+  grid-column: 1 / -1;
+}
+.autotrade-perf-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
+}
+.perf-card {
+  padding: 12px; border-radius: 8px;
+  background: rgba(0,240,255,0.04); border: 1px solid var(--border);
+}
+.perf-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.perf-value { font-size: 18px; font-weight: 600; font-family: var(--font-display); color: var(--text-primary); }
+.perf-value.profit { color: var(--profit); }
+.perf-value.loss { color: var(--loss); }
+.perf-bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 6px; }
+.perf-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--profit)); transition: width 0.4s; }
 
 .autotrade-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .autotrade-result {

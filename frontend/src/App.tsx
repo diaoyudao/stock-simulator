@@ -1379,17 +1379,20 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [runningResult, setRunningResult] = useState<any>(null);
+  const [perfData, setPerfData] = useState<any>(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [cfg, st, lg] = await Promise.all([
+      const [cfg, st, lg, pf] = await Promise.all([
         api.getAutoTradeConfig(),
         api.getAutoTradeStatus(),
         api.getAutoTradeLogs(50),
+        api.getAutoTradePerformance(90).catch(() => null),
       ]);
       setConfig(cfg);
       setStatus(st);
       setLogs(lg);
+      if (pf) setPerfData(pf);
     } catch (e: any) { toast(e?.detail || "加载失败"); }
   }, []);
 
@@ -1433,6 +1436,8 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
         screen_top_n: Number(config.screen_top_n),
         min_price: Number(config.min_price),
         max_price: Number(config.max_price),
+        trailing_stop_enabled: config.trailing_stop_enabled ? 1 : 0,
+        trailing_stop_pct: Number(config.trailing_stop_pct),
       });
       setConfig(c);
       toast("配置已保存");
@@ -1457,6 +1462,17 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
       const r = await api.runAutoTradeMonitor();
       setRunningResult(r);
       toast(`监控完成: 卖出${r.sells}只`);
+      fetchAll(); onTrade();
+    } catch (e: any) { toast(e?.detail || "执行失败"); }
+    finally { setLoading(false); }
+  };
+
+  const handleRunClosing = async () => {
+    setLoading(true);
+    try {
+      const r = await api.runAutoTradeClosing();
+      setRunningResult(r);
+      toast(`收盘扫描完成: 卖出${r.sells}只`);
       fetchAll(); onTrade();
     } catch (e: any) { toast(e?.detail || "执行失败"); }
     finally { setLoading(false); }
@@ -1540,6 +1556,7 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
           <label>止盈线2 <input type="number" min={0} value={config.take_profit_tier2 || 20} onChange={e => setConfig({ ...config, take_profit_tier2: Number(e.target.value) })} /> % (全出)</label>
           <label>回撤熔断 <input type="number" min={5} max={50} value={config.max_drawdown_pct || 15} onChange={e => setConfig({ ...config, max_drawdown_pct: Number(e.target.value) })} /> %</label>
           <label>连亏熔断 <input type="number" min={1} max={10} value={config.consecutive_loss_limit || 3} onChange={e => setConfig({ ...config, consecutive_loss_limit: Number(e.target.value) })} /> 次</label>
+          <label className="autotrade-full-row"><input type="checkbox" checked={!!config.trailing_stop_enabled} onChange={e => setConfig({ ...config, trailing_stop_enabled: e.target.checked ? 1 : 0 })} /> 追踪止损 — 从最高点回撤 <input type="number" min={1} max={30} value={config.trailing_stop_pct || 5} onChange={e => setConfig({ ...config, trailing_stop_pct: Number(e.target.value) })} style={{width:60,display:'inline-block'}} /> % 时全仓卖出</label>
         </div>
         <button className="detail-buy" onClick={handleSaveConfig} disabled={loading}>{loading ? "保存中..." : "保存配置"}</button>
       </section>
@@ -1550,6 +1567,7 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
         <div className="autotrade-buttons">
           <button className="detail-buy" onClick={handleRunOpening} disabled={loading}>执行开盘扫描</button>
           <button className="detail-buy" onClick={handleRunMonitor} disabled={loading}>执行盘中监控</button>
+          <button className="detail-buy" onClick={handleRunClosing} disabled={loading}>执行收盘扫描</button>
           <button className="detail-sell" onClick={handleResetCircuit}>重置熔断状态</button>
         </div>
         {runningResult && (
@@ -1559,6 +1577,46 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
           </div>
         )}
       </section>
+
+      {/* Performance Analytics */}
+      {perfData && perfData.metrics && perfData.metrics.trading_days > 0 && (
+        <section className="autotrade-section">
+          <h3>业绩分析 ({perfData.metrics.trading_days}个交易日)</h3>
+          <div className="autotrade-perf-grid">
+            <div className="perf-card">
+              <div className="perf-label">总盈亏</div>
+              <div className={perfData.metrics.total_pnl >= 0 ? "perf-value profit" : "perf-value loss"}>
+                {perfData.metrics.total_pnl >= 0 ? "+" : ""}{perfData.metrics.total_pnl?.toLocaleString()} ({perfData.metrics.total_pnl_pct >= 0 ? "+" : ""}{perfData.metrics.total_pnl_pct}%)
+              </div>
+            </div>
+            <div className="perf-card">
+              <div className="perf-label">胜率</div>
+              <div className="perf-value">
+                {perfData.metrics.win_rate}%
+                <div className="perf-bar"><div className="perf-bar-fill" style={{width: `${perfData.metrics.win_rate}%`}} /></div>
+              </div>
+            </div>
+            <div className="perf-card">
+              <div className="perf-label">盈亏比</div>
+              <div className="perf-value">{perfData.metrics.profit_loss_ratio}</div>
+            </div>
+            <div className="perf-card">
+              <div className="perf-label">Sharpe比率</div>
+              <div className={perfData.metrics.sharpe_ratio >= 0 ? "perf-value profit" : "perf-value loss"}>
+                {perfData.metrics.sharpe_ratio}
+              </div>
+            </div>
+            <div className="perf-card">
+              <div className="perf-label">最大回撤</div>
+              <div className="perf-value loss">-{perfData.metrics.max_drawdown}%</div>
+            </div>
+            <div className="perf-card">
+              <div className="perf-label">总交易次数</div>
+              <div className="perf-value">{perfData.metrics.total_trades}</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Trade Log */}
       <section className="autotrade-section">

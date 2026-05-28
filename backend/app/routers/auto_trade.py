@@ -11,9 +11,11 @@ from app.services.auto_trader import (
     get_logs,
     run_opening_bell,
     run_intraday_monitor,
+    run_closing_bell,
     start_scheduler,
     stop_scheduler,
     get_status,
+    get_performance_analytics,
 )
 
 router = APIRouter()
@@ -34,6 +36,8 @@ class ConfigUpdate(BaseModel):
     screen_top_n: int | None = None
     min_price: float | None = None
     max_price: float | None = None
+    trailing_stop_enabled: int | None = None
+    trailing_stop_pct: float | None = None
 
 
 class ToggleRequest(BaseModel):
@@ -79,6 +83,12 @@ async def manual_monitor():
     return result
 
 
+@router.post("/run-closing")
+async def manual_closing():
+    result = await run_closing_bell()
+    return result
+
+
 @router.post("/reset-circuit")
 async def reset_circuit():
     await _update_field(
@@ -102,3 +112,8 @@ async def logs(
     action: str = Query(""),
 ):
     return await get_logs(limit=limit, run_type=run_type, action=action)
+
+
+@router.get("/performance")
+async def performance(days: int = Query(90, ge=7, le=365)):
+    return await get_performance_analytics(days=days)

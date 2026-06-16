@@ -208,6 +208,7 @@ export interface Transaction {
   amount: number;
   fee: number;
   created_at: number;
+  board_type?: string;
 }
 
 export interface WatchlistItem {
@@ -437,7 +438,7 @@ export const api = {
     request<KLineItem[]>(`/market/history/${code}?period=${period}`),
   getAccount: () => request<AccountInfo>("/trade/account"),
   getPositions: () => request<Position[]>("/trade/positions"),
-  getTransactions: (params: { limit?: number; start_date?: string; end_date?: string; action?: string } = {}) => {
+  getTransactions: (params: { limit?: number; start_date?: string; end_date?: string; action?: string; board_type?: string } = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v).map(([k, v]) => [k, String(v)])
     ).toString();
@@ -574,6 +575,12 @@ export const api = {
     request<StockItem[]>(`/market/ranking?sort_by=${encodeURIComponent(sortBy)}&order=${order}&limit=${limit}`),
   getLhb: (days: number = 5) =>
     request<LhbItem[]>(`/market/lhb?days=${days}`),
+  getKcb: (params: Record<string, string | number> = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).map(([k, v]) => [k, String(v)])
+    ).toString();
+    return request<SpotResult>(`/market/kcb?${qs}`);
+  },
   getAIAnalysis: (code: string) =>
     request<AIAnalysis>(`/ai/analyze/${code}`),
   getAIScore: (code: string) =>

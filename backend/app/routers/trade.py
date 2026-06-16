@@ -209,8 +209,9 @@ async def transactions(
     start_date: str | None = Query(None, description="YYYY-MM-DD"),
     end_date: str | None = Query(None, description="YYYY-MM-DD"),
     action: str | None = Query(None, description="buy or sell"),
+    board_type: str | None = Query(None, description="main or kcb"),
 ):
-    return await get_transactions(limit, start_date, end_date, action)
+    return await get_transactions(limit, start_date, end_date, action, board_type)
 
 
 @router.get("/dashboard")

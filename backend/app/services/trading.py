@@ -181,6 +181,14 @@ async def _ensure_tables(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE auto_trading_config ADD COLUMN last_closing_bell_run TEXT NOT NULL DEFAULT ''")
     except Exception:
         pass
+    try:
+        await db.execute("ALTER TABLE transactions ADD COLUMN board_type TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        await db.execute("ALTER TABLE auto_trading_config ADD COLUMN target_boards TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
     # auto_trade_log CHECK迁移: 增加 'closing_bell' run_type
     try:
         await db.executescript("""
@@ -226,6 +234,14 @@ async def _ensure_tables(db: aiosqlite.Connection):
     """)
 
 
+def _get_board_type(code: str) -> str:
+    """根据股票代码判断板块。科创板688开头，其他为主板。"""
+    code = code.zfill(6)
+    if code.startswith("688"):
+        return "kcb"
+    return "main"
+
+
 async def get_account() -> dict:
     db = await _get_db()
     cur = await db.execute("SELECT cash FROM account WHERE id = 1")
@@ -245,6 +261,7 @@ async def get_transactions(
     start_date: str | None = None,
     end_date: str | None = None,
     action: str | None = None,
+    board_type: str | None = None,
 ) -> list[dict]:
     db = await _get_db()
     conditions = []
@@ -262,6 +279,9 @@ async def get_transactions(
     if action in ("buy", "sell"):
         conditions.append("action = ?")
         params.append(action)
+    if board_type in ("main", "kcb"):
+        conditions.append("board_type = ?")
+        params.append(board_type)
 
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
@@ -270,7 +290,16 @@ async def get_transactions(
         params,
     )
     rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    # 兼容旧记录：board_type 为空时通过前缀判断
+    cols = [d[0] for d in cur.description or []]
+    results = []
+    for r in rows:
+        data = dict(zip(cols, r))
+        code = data.get("code", "").zfill(6)
+        if not data.get("board_type"):
+            data["board_type"] = "kcb" if code.startswith("688") else "main"
+        results.append(data)
+    return results
 
 
 async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
@@ -308,9 +337,10 @@ async def buy_stock(code: str, name: str, quantity: int, price: float) -> dict:
                 (code, name, quantity, price, today, price),
             )
 
+        board_type = _get_board_type(code)
         await db.execute(
-            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, 'buy', ?, ?, ?, ?, ?)",
-            (code, name, quantity, price, amount, total_fee, time.time()),
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at, board_type) VALUES (?, ?, 'buy', ?, ?, ?, ?, ?, ?)",
+            (code, name, quantity, price, amount, total_fee, time.time(), board_type),
         )
         await db.commit()
 
@@ -346,9 +376,10 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
             await db.execute("UPDATE positions SET quantity = ? WHERE code = ?", (new_qty, code))
 
         profit = (price - pos["avg_cost"]) * quantity - total_fee
+        board_type = _get_board_type(code)
         await db.execute(
-            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, 'sell', ?, ?, ?, ?, ?)",
-            (code, pos["name"], quantity, price, amount, total_fee, time.time()),
+            "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at, board_type) VALUES (?, ?, 'sell', ?, ?, ?, ?, ?, ?)",
+            (code, pos["name"], quantity, price, amount, total_fee, time.time(), board_type),
         )
         await db.commit()
 
@@ -356,13 +387,42 @@ async def sell_stock(code: str, quantity: int, price: float) -> dict:
 
 
 async def reset_account() -> dict:
-    """重置账户到初始状态。"""
+    """重置账户到初始状态，清除所有数据。"""
     db = await _get_db()
     await db.execute("UPDATE account SET cash = ? WHERE id = 1", (INITIAL_CASH,))
     await db.execute("DELETE FROM positions")
     await db.execute("DELETE FROM transactions")
+    await db.execute("DELETE FROM watchlist")
+    await db.execute("DELETE FROM watchlist_groups")
+    await db.execute("DELETE FROM pending_orders")
+    await db.execute("DELETE FROM daily_snapshots")
+    await db.execute("DELETE FROM price_alerts")
+    await db.execute("DELETE FROM auto_trade_log")
+    await db.execute("DELETE FROM auto_trading_config")
+    # 恢复默认配置
+    await db.execute("""
+        INSERT INTO auto_trading_config (
+            id, enabled, strategy, max_position_pct, max_daily_buy_pct, max_positions,
+            stop_loss_tier1, stop_loss_tier2, take_profit_tier1, take_profit_tier2,
+            max_drawdown_pct, consecutive_loss_limit, monitor_interval_sec,
+            screen_top_n, min_price, max_price,
+            peak_total_assets, consecutive_losses, daily_bought_amount,
+            daily_bought_date, last_opening_bell_run, last_closing_bell_run,
+            last_monitor_run, updated_at, target_boards
+        ) VALUES (
+            1, 0, 'oversold_bounce', 10.0, 30.0, 10,
+            -5.0, -10.0, 10.0, 20.0,
+            15.0, 3, 300,
+            3, 1.0, 8.0,
+            0.0, 0, 0.0,
+            '', '', '',
+            0.0, 0.0, ''
+        )
+    """)
+    # 恢复默认自选分组
+    await db.execute("INSERT INTO watchlist_groups (id, name, sort_order) VALUES (1, '我的自选', 0)")
     await db.commit()
-    return {"success": True, "message": "账户已重置"}
+    return {"success": True, "message": "账户已重置，所有数据已清除"}
 
 
 async def add_watchlist(code: str, name: str, group_id: int = 1) -> dict:
@@ -551,9 +611,10 @@ async def _fill_order(db: aiosqlite.Connection, order: aiosqlite.Row, fill_price
 
     amount = order["quantity"] * fill_price
     _, _, _, fill_fee = _calc_fees(amount, is_sell=(order["action"] == "sell"))
+    board_type = _get_board_type(order["code"])
     await db.execute(
-        "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (order["code"], order["name"], order["action"], order["quantity"], fill_price, amount, fill_fee, time.time()),
+        "INSERT INTO transactions (code, name, action, quantity, price, amount, fee, created_at, board_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (order["code"], order["name"], order["action"], order["quantity"], fill_price, amount, fill_fee, time.time(), board_type),
     )
 
     await db.execute(

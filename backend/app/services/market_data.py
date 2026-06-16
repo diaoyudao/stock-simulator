@@ -1056,12 +1056,13 @@ _INDEX_TARGETS = {
     "000001": "上证指数",
     "399001": "深证成指",
     "399006": "创业板指",
+    "000688": "科创50",
 }
 
 
 def _fetch_index_sina() -> list[dict]:
     """通过新浪行情接口获取大盘指数，单次请求。"""
-    codes = ["sh000001", "sz399001", "sz399006"]
+    codes = ["sh000001", "sz399001", "sz399006", "sh000688"]
     url = f"https://hq.sinajs.cn/list={','.join(codes)}"
     r = _http_get(url, headers=_SINA_HEADERS, timeout=10)
     r.encoding = "gbk"
@@ -1106,7 +1107,7 @@ def get_index_data() -> list[dict]:
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as pool:
             def _fetch_indices_tencent():
-                codes = "sh000001,sz399001,sz399006"
+                codes = "sh000001,sz399001,sz399006,sh000688"
                 url = f"https://qt.gtimg.cn/q={codes}"
                 r = _http_get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
                 r.encoding = "gbk"

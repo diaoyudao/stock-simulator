@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { api, type StockItem, type StockDetail as StockDetailType, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder, type EtfItem } from "./api";
+import { api, type StockItem, type StockDetail as StockDetailType, type AccountInfo, type Position, type Transaction, type SectorOverviewItem, type WatchlistItem, type WatchlistGroup, type LhbItem, type DailySnapshot, type PerformanceStats, type PendingOrder, type EtfItem, type AIScreenResult, type AIScreenItem } from "./api";
 import { createChart, LineSeries, type IChartApi, ColorType } from "lightweight-charts";
 import { toast, Toast, ToastProvider, usePolling, TradingTimeProvider, useTradingTime } from "./utils/shared";
 import { fmtAmt } from "./utils/format";
@@ -64,7 +64,7 @@ function SearchSelect({ value, onChange, options, placeholder }: {
     </div>
   );
 }
-type Tab = "market" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions" | "aiscreen" | "autotrade";
+type Tab = "market" | "kcb" | "etf" | "watchlist" | "sectors" | "ranking" | "positions" | "orders" | "analysis" | "transactions" | "aiscreen" | "autotrade";
 
 export default function App() {
   return (
@@ -158,7 +158,7 @@ function AppInner() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [txFilter, setTxFilter] = useState<{ start_date?: string; end_date?: string; action?: string }>({});
+  const [txFilter, setTxFilter] = useState<{ start_date?: string; end_date?: string; action?: string; board_type?: string }>({});
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [compareList, setCompareList] = useState<{ code: string; name: string }[]>([]);
   const [showCompare, setShowCompare] = useState(false);
@@ -174,11 +174,12 @@ function AppInner() {
     setTransactions(txs);
   }, [txFilter]);
 
-  const handleTxFilter = useCallback((start: string, end: string, action: string) => {
+  const handleTxFilter = useCallback((start: string, end: string, action: string, board: string) => {
     setTxFilter({
       ...(start ? { start_date: start } : {}),
       ...(end ? { end_date: end } : {}),
       ...(action ? { action } : {}),
+      ...(board ? { board_type: board } : {}),
     });
   }, []);
 
@@ -225,16 +226,17 @@ function AppInner() {
         <NotificationBell />
       </header>
       <nav className="tabs">
-        {(["market", "aiscreen", "autotrade", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
+        {(["market", "kcb", "aiscreen", "autotrade", "etf", "watchlist", "sectors", "ranking", "positions", "orders", "analysis", "transactions"] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} data-tab={t} onClick={() => setTab(t)}>
-            <span className="tab-icon">{t === "market" ? "📊" : t === "aiscreen" ? "🤖" : t === "autotrade" ? "⚡" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
-            <span className="tab-label">{t === "market" ? "行情" : t === "aiscreen" ? "AI精选" : t === "autotrade" ? "自动交易" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
+            <span className="tab-icon">{t === "market" ? "📊" : t === "kcb" ? "🧪" : t === "aiscreen" ? "🤖" : t === "autotrade" ? "⚡" : t === "etf" ? "🏦" : t === "watchlist" ? "⭐" : t === "sectors" ? "🏭" : t === "ranking" ? "🏆" : t === "positions" ? "💰" : t === "orders" ? "📋" : t === "analysis" ? "📈" : "📒"}</span>
+            <span className="tab-label">{t === "market" ? "行情" : t === "kcb" ? "科创板" : t === "aiscreen" ? "AI精选" : t === "autotrade" ? "自动交易" : t === "etf" ? "ETF" : t === "watchlist" ? "自选" : t === "sectors" ? "板块" : t === "ranking" ? "排行" : t === "positions" ? "持仓" : t === "orders" ? "委托" : t === "analysis" ? "分析" : "记录"}</span>
           </button>
         ))}
         <button className="tab reset" onClick={() => { if (confirm("确定重置账户？所有持仓和交易记录将被清除！")) { api.reset().then(refresh); } }}>重置</button>
       </nav>
       <main className="main">
         {tab === "market" && <MarketTab onTrade={refresh} onSelectStock={setSelectedStock} pendingFilter={pendingFilter} onFilterApplied={() => setPendingFilter(null)} />}
+        {tab === "kcb" && <KcbTab onTrade={refresh} onSelectStock={setSelectedStock} />}
         {tab === "aiscreen" && <AiScreenTab onSelectStock={setSelectedStock} />}
         {tab === "autotrade" && <AutoTradeTab onTrade={refresh} />}
         {tab === "etf" && <EtfTab onTrade={refresh} onSelectStock={setSelectedStock} />}
@@ -494,6 +496,146 @@ function MarketTab({ onTrade, onSelectStock, pendingFilter, onFilterApplied }: {
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--loss-color)", padding: "24px" }}>{error}</td></tr>
             )}
             {stocks.length === 0 && !loading && !error && (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-secondary)", padding: "24px" }}>暂无符合筛选条件的股票</td></tr>
+            )}
+            {stocks.map((s) => (
+              <tr key={s["代码"]}>
+                <td><button className="stock-link" onClick={() => onSelectStock(s["代码"])}>{s["代码"]}</button></td>
+                <td><button className="stock-link" onClick={() => onSelectStock(s["代码"])}>{s["名称"]}</button></td>
+                <td className="price">{s["最新价"]}</td>
+                <td className={s["涨跌幅"] >= 0 ? "profit" : "loss"}>{s["涨跌幅"].toFixed(2)}%</td>
+                <td>{s["换手率"]?.toFixed(2)}%</td>
+                <td>{(s["成交量"] / 10000).toFixed(0)}万</td>
+                <td>
+                  <button className="watch-btn" onClick={async () => { await api.addWatchlist(s["代码"], s["名称"]); toast("已加自选"); }}>自选</button>
+                  <TradeButton code={s["代码"]} name={s["名称"]} price={s["最新价"]} onDone={onTrade} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
+      <div className="pagination">
+        <button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</button>
+        <span>{page} / {totalPages || 1}</span>
+        <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}>下一页</button>
+      </div>
+    </div>
+  );
+}
+
+function KcbTab({ onTrade, onSelectStock }: { onTrade: () => void; onSelectStock: (code: string) => void }) {
+  const [stocks, setStocks] = useState<StockItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [filters, setFilters] = useState({
+    minPrice: "0", maxPrice: "100",
+    minChangePct: "", maxChangePct: "",
+    minTurnoverRate: "", minAmount: "",
+    minPe: "", maxPe: "",
+    minPb: "", maxPb: "",
+    minMktcap: "", maxMktcap: "",
+    minNmc: "", maxNmc: "",
+    minAmplitude: "", maxAmplitude: "",
+    minVolumeRatio: "", maxVolumeRatio: "",
+    near52High: false, near52Low: false,
+    excludeSt: false,
+    sortBy: "涨跌幅", sortOrder: "desc",
+  });
+
+  const buildParams = useCallback(() => {
+    const p: Record<string, string | number | boolean> = {
+      sort_by: filters.sortBy,
+      sort_order: filters.sortOrder,
+      page, page_size: 20,
+    };
+    const opt: [string, string][] = [
+      ["min_price", filters.minPrice], ["max_price", filters.maxPrice],
+      ["min_change_pct", filters.minChangePct], ["max_change_pct", filters.maxChangePct],
+      ["min_turnover_rate", filters.minTurnoverRate], ["min_amount", filters.minAmount],
+      ["min_pe", filters.minPe], ["max_pe", filters.maxPe],
+      ["min_pb", filters.minPb], ["max_pb", filters.maxPb],
+      ["min_amplitude", filters.minAmplitude], ["max_amplitude", filters.maxAmplitude],
+      ["min_volume_ratio", filters.minVolumeRatio], ["max_volume_ratio", filters.maxVolumeRatio],
+    ];
+    for (const [k, v] of opt) {
+      if (v) p[k] = v;
+    }
+    if (filters.minMktcap) p.min_mktcap = parseFloat(filters.minMktcap) * 1e8;
+    if (filters.maxMktcap) p.max_mktcap = parseFloat(filters.maxMktcap) * 1e8;
+    if (filters.minNmc) p.min_nmc = parseFloat(filters.minNmc) * 1e8;
+    if (filters.maxNmc) p.max_nmc = parseFloat(filters.maxNmc) * 1e8;
+    if (filters.minAmount) p.min_amount = parseFloat(filters.minAmount) * 1e8;
+    if (filters.excludeSt) p.exclude_st = true;
+    if (filters.near52High) p.near_52week_high = true;
+    if (filters.near52Low) p.near_52week_low = true;
+    return p;
+  }, [filters, page]);
+
+  const fetchStocks = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.getKcb(buildParams() as Record<string, string | number>);
+      setStocks(res.items);
+      setTotal(res.total);
+    } catch (e: any) {
+      console.error("科创板数据获取失败:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [buildParams]);
+
+  useEffect(() => {
+    const t = setTimeout(fetchStocks, 400);
+    return () => clearTimeout(t);
+  }, [fetchStocks]);
+
+  const totalPages = Math.ceil(total / 20);
+  const f = (key: string, val: string | boolean) => { setFilters({ ...filters, [key]: val }); setPage(1); };
+
+  return (
+    <div className="market-tab">
+      <div className="filters">
+        <label>价格<input type="number" value={filters.minPrice} placeholder="最低" onChange={(e) => f("minPrice", e.target.value)} />-<input type="number" value={filters.maxPrice} placeholder="最高" onChange={(e) => f("maxPrice", e.target.value)} /></label>
+        <label>涨跌幅%<input type="number" value={filters.minChangePct} placeholder="最低" onChange={(e) => f("minChangePct", e.target.value)} />-<input type="number" value={filters.maxChangePct} placeholder="最高" onChange={(e) => f("maxChangePct", e.target.value)} /></label>
+        <label className="checkbox-label"><input type="checkbox" checked={filters.excludeSt} onChange={(e) => f("excludeSt", e.target.checked)} />排除ST</label>
+        <button onClick={fetchStocks}>筛选</button>
+        <button className="toggle-more" onClick={() => setShowMore(!showMore)}>{showMore ? "收起" : "更多"}</button>
+      </div>
+      {showMore && (
+        <div className="filters more-filters">
+          <label>换手率%≥<input type="number" value={filters.minTurnoverRate} onChange={(e) => f("minTurnoverRate", e.target.value)} /></label>
+          <label>成交额≥(亿)<input type="number" value={filters.minAmount} onChange={(e) => f("minAmount", e.target.value)} /></label>
+          <label>市盈率<input type="number" value={filters.minPe} placeholder="最低" onChange={(e) => f("minPe", e.target.value)} />-<input type="number" value={filters.maxPe} placeholder="最高" onChange={(e) => f("maxPe", e.target.value)} /></label>
+          <label>市净率<input type="number" value={filters.minPb} placeholder="最低" onChange={(e) => f("minPb", e.target.value)} />-<input type="number" value={filters.maxPb} placeholder="最高" onChange={(e) => f("maxPb", e.target.value)} /></label>
+          <label>总市值(亿)<input type="number" value={filters.minMktcap} placeholder="最低" onChange={(e) => f("minMktcap", e.target.value)} />-<input type="number" value={filters.maxMktcap} placeholder="最高" onChange={(e) => f("maxMktcap", e.target.value)} /></label>
+          <label>流通市值(亿)<input type="number" value={filters.minNmc} placeholder="最低" onChange={(e) => f("minNmc", e.target.value)} />-<input type="number" value={filters.maxNmc} placeholder="最高" onChange={(e) => f("maxNmc", e.target.value)} /></label>
+          <label>振幅%<input type="number" value={filters.minAmplitude} placeholder="最低" onChange={(e) => f("minAmplitude", e.target.value)} />-<input type="number" value={filters.maxAmplitude} placeholder="最高" onChange={(e) => f("maxAmplitude", e.target.value)} /></label>
+          <label>量比<input type="number" value={filters.minVolumeRatio} placeholder="最低" onChange={(e) => f("minVolumeRatio", e.target.value)} />-<input type="number" value={filters.maxVolumeRatio} placeholder="最高" onChange={(e) => f("maxVolumeRatio", e.target.value)} /></label>
+          <label className="checkbox-label"><input type="checkbox" checked={filters.near52High} onChange={(e) => f("near52High", e.target.checked)} />52周新高</label>
+          <label className="checkbox-label"><input type="checkbox" checked={filters.near52Low} onChange={(e) => f("near52Low", e.target.checked)} />52周新低</label>
+        </div>
+      )}
+      <div className="filters sort-bar">
+        <label>排序<select value={filters.sortBy} onChange={(e) => { setFilters({ ...filters, sortBy: e.target.value }); setPage(1); }}>
+          <option value="涨跌幅">涨跌幅</option><option value="换手率">换手率</option>
+          <option value="成交量">成交量</option><option value="最新价">价格</option>
+          <option value="成交额">成交额</option><option value="市盈率-动态">市盈率</option><option value="市净率">市净率</option><option value="总市值">总市值</option><option value="量比">量比</option>
+        </select></label>
+        <label>方向<select value={filters.sortOrder} onChange={(e) => { setFilters({ ...filters, sortOrder: e.target.value }); setPage(1); }}>
+          <option value="desc">降序</option><option value="asc">升序</option>
+        </select></label>
+        <span className="result-info">共 {total} 只</span>
+      </div>
+      {loading ? <div className="loading">加载中...</div> : (
+        <div className="table-wrap"><table className="stock-table">
+          <thead>
+            <tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>换手率</th><th>成交量</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            {stocks.length === 0 && !loading && (
               <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-secondary)", padding: "24px" }}>暂无符合筛选条件的股票</td></tr>
             )}
             {stocks.map((s) => (
@@ -946,12 +1088,13 @@ function RankingTab({ onSelectStock }: { onSelectStock: (code: string) => void }
   );
 }
 
-function TransactionsTab({ transactions, onFilter }: { transactions: Transaction[]; onFilter: (start: string, end: string, action: string) => void }) {
+function TransactionsTab({ transactions, onFilter }: { transactions: Transaction[]; onFilter: (start: string, end: string, action: string, board: string) => void }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [actionFilter, setActionFilter] = useState("");
+  const [boardFilter, setBoardFilter] = useState("");
 
-  const apply = () => onFilter(startDate, endDate, actionFilter);
+  const apply = () => onFilter(startDate, endDate, actionFilter, boardFilter);
 
   if (transactions.length === 0) return (
     <div>
@@ -962,6 +1105,11 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
           <option value="">全部</option>
           <option value="buy">买入</option>
           <option value="sell">卖出</option>
+        </select></label>
+        <label>板块<select value={boardFilter} onChange={(e) => setBoardFilter(e.target.value)}>
+          <option value="">全部</option>
+          <option value="main">主板</option>
+          <option value="kcb">科创板</option>
         </select></label>
         <button onClick={apply}>筛选</button>
       </div>
@@ -979,8 +1127,13 @@ function TransactionsTab({ transactions, onFilter }: { transactions: Transaction
           <option value="buy">买入</option>
           <option value="sell">卖出</option>
         </select></label>
+        <label>板块<select value={boardFilter} onChange={(e) => setBoardFilter(e.target.value)}>
+          <option value="">全部</option>
+          <option value="main">主板</option>
+          <option value="kcb">科创板</option>
+        </select></label>
         <button onClick={apply}>筛选</button>
-        {(startDate || endDate || actionFilter) && <button onClick={() => { setStartDate(""); setEndDate(""); setActionFilter(""); onFilter("", "", ""); }}>清除</button>}
+        {(startDate || endDate || actionFilter || boardFilter) && <button onClick={() => { setStartDate(""); setEndDate(""); setActionFilter(""); setBoardFilter(""); onFilter("", "", "", ""); }}>清除</button>}
       </div>
       <div className="table-wrap"><table className="stock-table">
         <thead>
@@ -1307,12 +1460,12 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
                 <tr>
                   <th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th>
                   <th>综合得分</th>
-                  {topFactors.map(f => <th key={f}>{f}</th>)}
+                  {topFactors.map((f: string) => <th key={f}>{f}</th>)}
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {data.results.map((item, i) => (
+                {data.results.map((item: AIScreenItem, i: number) => (
                   <React.Fragment key={item["代码"]}>
                     <tr className={expandedCode === item["代码"] ? "expanded" : ""} onClick={() => setExpandedCode(expandedCode === item["代码"] ? null : item["代码"])}>
                       <td className="rank">#{i + 1}</td>
@@ -1321,8 +1474,8 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
                       <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["最新价"]?.toFixed(2)}</td>
                       <td className={item["涨跌幅"] >= 0 ? "profit" : "loss"}>{item["涨跌幅"] > 0 ? "+" : ""}{item["涨跌幅"]?.toFixed(2)}%</td>
                       <td><span className={`score-badge ${item["综合得分"] >= 60 ? "high" : item["综合得分"] >= 40 ? "mid" : "low"}`}>{item["综合得分"]}</span></td>
-                      {topFactors.map(f => (
-                        <td key={f}><FactorBar value={(item["因子明细"] || {})[f]} /></td>
+                      {topFactors.map((f: string) => (
+                        <td key={f}><FactorBar value={(item["因子明细"] || {})[f] as number} /></td>
                       ))}
                       <td><button className="detail-buy" onClick={e => { e.stopPropagation(); onSelectStock(item["代码"]); }}>查看</button></td>
                     </tr>
@@ -1332,11 +1485,11 @@ function AiScreenTab({ onSelectStock }: { onSelectStock: (code: string) => void 
                           <div className="factor-detail">
                             <h4>{item["名称"]}({item["代码"]}) 因子明细</h4>
                             <div className="factor-bars">
-                              {Object.entries(item["因子明细"] || {}).map(([k, v]) => (
+                              {Object.entries(item["因子明细"] || {}).map(([k, v]: [string, unknown]) => (
                                 <div key={k} className="factor-item">
                                   <span className="factor-name">{k}</span>
                                   <div className="factor-bar-outer"><div className="factor-bar-inner" style={{ width: `${Math.max(0, Number(v))}%` }} /></div>
-                                  <span className="factor-val">{v}</span>
+                                  <span className="factor-val">{String(v)}</span>
                                 </div>
                               ))}
                             </div>
@@ -1362,14 +1515,6 @@ function FactorBar({ value }: { value: number }) {
   const cls = value >= 70 ? "high" : value >= 40 ? "mid" : "low";
   return <span className={`factor-mini ${cls}`} style={{ width: `${Math.max(4, value)}px` }} title={`${value}`}></span>;
 }
-
-const factorLabel: Record<string, string> = {
-  momentum: "动量", volume_ratio: "量比", turnover: "换手",
-  pe_score: "PE估值", pb_score: "PB估值", amplitude: "振幅",
-  liquidity: "流动性", size_score: "市值",
-  oversold_depth: "超跌深度", bounce_signal: "反弹信号",
-  breakout_signal: "突破信号",
-};
 
 // ── AutoTradeTab ───────────────────────────────────────────
 
@@ -1438,6 +1583,7 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
         max_price: Number(config.max_price),
         trailing_stop_enabled: config.trailing_stop_enabled ? 1 : 0,
         trailing_stop_pct: Number(config.trailing_stop_pct),
+        target_boards: config.target_boards || "",
       });
       setConfig(c);
       toast("配置已保存");
@@ -1536,6 +1682,15 @@ function AutoTradeTab({ onTrade }: { onTrade: () => void }) {
           </label>
           <label>价格上限
             <input type="number" step={0.5} min={0.5} value={config.max_price || 8} onChange={e => setConfig({ ...config, max_price: Number(e.target.value) })} /> 元
+          </label>
+          <label>目标板块
+            <select multiple value={config.target_boards ? JSON.parse(config.target_boards) : []} onChange={e => {
+              const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+              setConfig({ ...config, target_boards: JSON.stringify(selected) });
+            }} style={{height:80}}>
+              <option value="main">主板</option>
+              <option value="kcb">科创板</option>
+            </select>
           </label>
           <label>监控间隔
             <input type="number" min={60} max={3600} step={60} value={config.monitor_interval_sec || 300} onChange={e => setConfig({ ...config, monitor_interval_sec: Number(e.target.value) })} /> 秒

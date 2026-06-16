@@ -38,6 +38,7 @@ class ConfigUpdate(BaseModel):
     max_price: float | None = None
     trailing_stop_enabled: int | None = None
     trailing_stop_pct: float | None = None
+    target_boards: str | None = None
 
 
 class ToggleRequest(BaseModel):

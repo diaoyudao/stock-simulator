@@ -246,6 +246,15 @@ async def _build_price_map() -> dict[str, float]:
     return {}
 
 
+def _match_board(code: str, boards: list[str]) -> bool:
+    """判断股票代码是否匹配目标板块。"""
+    if not boards:
+        return True
+    code = code.zfill(6)
+    board = "kcb" if code.startswith("688") else "main"
+    return board in boards
+
+
 # ── Opening Bell Routine ────────────────────────────────────
 
 async def run_opening_bell() -> dict:
@@ -269,6 +278,18 @@ async def run_opening_bell() -> dict:
         if not results or not results.get("results"):
             await _log("opening_bell", "error", reason="选股结果为空")
             return {**summary, "reason": "选股无结果"}
+
+        # 板块筛选
+        try:
+            boards = json.loads(config.get("target_boards", "[]") or "[]")
+        except Exception:
+            boards = []
+
+        if boards:
+            results["results"] = [s for s in results["results"] if _match_board(s.get("代码", ""), boards)]
+            if not results["results"]:
+                await _log("opening_bell", "skip", reason=f"无匹配板块股票({boards})")
+                return {**summary, "reason": f"无匹配板块股票({boards})"}
 
         top_n = config.get("screen_top_n", 3) or 3
         picks = results["results"][:top_n]

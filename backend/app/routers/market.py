@@ -182,3 +182,55 @@ def ranking(
 @router.get("/lhb")
 def lhb(days: int = Query(5, ge=1, le=30)):
     return get_lhb(days)
+
+
+@router.get("/kcb")
+def kcb(
+    min_price: float | None = Query(None),
+    max_price: float | None = Query(None),
+    min_change_pct: float | None = Query(None),
+    max_change_pct: float | None = Query(None),
+    min_turnover_rate: float | None = Query(None),
+    min_volume: float | None = Query(None),
+    min_amount: float | None = Query(None),
+    min_pe: float | None = Query(None),
+    max_pe: float | None = Query(None),
+    min_pb: float | None = Query(None),
+    max_pb: float | None = Query(None),
+    min_mktcap: float | None = Query(None),
+    max_mktcap: float | None = Query(None),
+    min_nmc: float | None = Query(None),
+    max_nmc: float | None = Query(None),
+    min_amplitude: float | None = Query(None),
+    max_amplitude: float | None = Query(None),
+    min_volume_ratio: float | None = Query(None),
+    max_volume_ratio: float | None = Query(None),
+    near_52week_high: bool = Query(False),
+    near_52week_low: bool = Query(False),
+    exclude_st: bool = Query(False),
+    sort_by: str = Query("涨跌幅"),
+    sort_order: str = Query("desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """科创板行情（代码688开头）。默认价格区间0-100，其他筛选可选。"""
+    if sort_by not in _VALID_SORT_FIELDS:
+        raise HTTPException(status_code=422, detail=f"无效的排序字段: {sort_by}")
+    return filter_low_price(
+        min_price=min_price if min_price is not None else 0,
+        max_price=max_price if max_price is not None else 100,
+        min_change_pct=min_change_pct, max_change_pct=max_change_pct,
+        min_turnover_rate=min_turnover_rate, min_volume=min_volume,
+        min_amount=min_amount,
+        min_pe=min_pe, max_pe=max_pe,
+        min_pb=min_pb, max_pb=max_pb,
+        min_mktcap=min_mktcap, max_mktcap=max_mktcap,
+        min_nmc=min_nmc, max_nmc=max_nmc,
+        min_amplitude=min_amplitude, max_amplitude=max_amplitude,
+        min_volume_ratio=min_volume_ratio, max_volume_ratio=max_volume_ratio,
+        near_52week_high=near_52week_high, near_52week_low=near_52week_low,
+        keyword="688",  # 科创板代码前缀
+        exclude_st=exclude_st,
+        sort_by=sort_by, sort_order=sort_order,
+        page=page, page_size=page_size,
+    )

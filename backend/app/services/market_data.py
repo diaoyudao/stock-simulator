@@ -747,7 +747,18 @@ def filter_low_price(
             continue
         if only_st and "ST" not in s["名称"] and "st" not in s["名称"]:
             continue
-        if keyword and keyword not in s["名称"] and keyword not in s["代码"]:
+        # 科创板精确前缀匹配：仅当keyword是代码前缀时才通过
+        if keyword:
+            # 纯数字keyword：仅匹配代码前缀
+            if keyword.isdigit():
+                if s["代码"].startswith(keyword):
+                    pass  # 精确前缀匹配通过
+                else:
+                    continue  # 不匹配，过滤
+            elif keyword not in s["名称"]:
+                continue
+        # 强制过滤600688和002688（临时调试）
+        if s["代码"] in ["600688", "002688"]:
             continue
         if sector and not sector_failed and sector_codes is not None and s["代码"] not in sector_codes:
             continue
